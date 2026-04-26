@@ -2,20 +2,20 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"time"
 
 	"github.com/beohoang98/moneyapp/internal/storage"
+	"gorm.io/gorm"
 )
 
 type HealthHandler struct {
-	db          *sql.DB
+	db          *gorm.DB
 	storage     storage.ObjectStore
 	storageType string // "local" | "s3" — for health JSON only
 }
 
-func NewHealthHandler(db *sql.DB, s storage.ObjectStore, storageType string) *HealthHandler {
+func NewHealthHandler(db *gorm.DB, s storage.ObjectStore, storageType string) *HealthHandler {
 	return &HealthHandler{db: db, storage: s, storageType: storageType}
 }
 
@@ -28,7 +28,8 @@ func (h *HealthHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	dbStatus := "ok"
-	if err := h.db.PingContext(ctx); err != nil {
+	sqlDB, err := h.db.DB()
+	if err != nil || sqlDB.PingContext(ctx) != nil {
 		dbStatus = "error"
 	}
 
@@ -52,9 +53,9 @@ func (h *HealthHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, statusCode, map[string]string{
-		"status":        overallStatus,
-		"database":      dbStatus,
-		"storage":       storageStatus,
-		"storage_type":  h.storageType,
+		"status":       overallStatus,
+		"database":     dbStatus,
+		"storage":      storageStatus,
+		"storage_type": h.storageType,
 	})
 }

@@ -5,6 +5,8 @@ import { IncomeForm } from '../components/income/IncomeForm'
 import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { CategoryFilter } from '../components/filters/CategoryFilter'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FileUpload } from '../components/attachments/FileUpload'
+import { AttachmentList } from '../components/attachments/AttachmentList'
 import { useToast } from '../hooks/useToast'
 import { formatAmount, formatDisplayDate } from '../utils/format'
 import type { Income } from '../types/income'
@@ -20,6 +22,8 @@ export function IncomePage() {
   const [showForm, setShowForm] = useState(false)
   const [editingIncome, setEditingIncome] = useState<Income | undefined>()
   const [deleteTarget, setDeleteTarget] = useState<Income | null>(null)
+  const [detailTarget, setDetailTarget] = useState<Income | null>(null)
+  const [attachmentRefresh, setAttachmentRefresh] = useState(0)
   const { addToast } = useToast()
 
   const dateFrom = searchParams.get('date_from') ?? ''
@@ -117,14 +121,12 @@ export function IncomePage() {
         <CategoryFilter type="income" value={categoryId} onChange={handleCategoryChange} />
       </div>
 
-      {totalAmount > 0 && (
-        <div className="summary-bar">
-          <div className="summary-stat">
-            <div className="summary-stat__label">Total</div>
-            <div className="summary-stat__value summary-stat__value--positive">{formatAmount(totalAmount)}</div>
-          </div>
+      <div className="summary-bar">
+        <div className="summary-stat">
+          <div className="summary-stat__label">Total</div>
+          <div className="summary-stat__value summary-stat__value--positive">{formatAmount(totalAmount)}</div>
         </div>
-      )}
+      </div>
 
       {loading ? (
         <div className="loading">Loading...</div>
@@ -150,8 +152,9 @@ export function IncomePage() {
                   <td>{inc.description}</td>
                   <td className="amount">{formatAmount(inc.amount)}</td>
                   <td className="actions">
-                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingIncome(inc); setShowForm(true) }} title="Edit">✏️</button>
-                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(inc)} title="Delete">🗑️</button>
+                    <button className="btn btn-sm" onClick={() => setDetailTarget(inc)} title="Attachments">Files</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingIncome(inc); setShowForm(true) }} title="Edit">Edit</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(inc)} title="Delete">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -177,6 +180,27 @@ export function IncomePage() {
               income={editingIncome}
               onSubmit={editingIncome ? handleUpdate : handleCreate}
               onCancel={() => { setShowForm(false); setEditingIncome(undefined) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {detailTarget && (
+        <div className="form-modal-overlay" onClick={() => setDetailTarget(null)}>
+          <div className="form-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Income Attachments</h2>
+            <p style={{ fontSize: 14, color: 'var(--text)' }}>
+              {formatDisplayDate(detailTarget.date)} &mdash; {formatAmount(detailTarget.amount)}
+            </p>
+            <FileUpload
+              entityType="income"
+              entityId={detailTarget.id}
+              onUploaded={() => setAttachmentRefresh((k) => k + 1)}
+            />
+            <AttachmentList
+              entityType="income"
+              entityId={detailTarget.id}
+              refreshKey={attachmentRefresh}
             />
           </div>
         </div>

@@ -23,7 +23,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("failed to get underlying sql.DB: %v", err)
+	}
+	defer sqlDB.Close()
 
 	var store storage.ObjectStore
 	switch cfg.StorageType {
@@ -52,7 +56,12 @@ func main() {
 	expenseService := services.NewExpenseService(db, categoryService)
 	incomeService := services.NewIncomeService(db, categoryService)
 	invoiceService := services.NewInvoiceService(db)
+	attachmentService := services.NewAttachmentService(db, store)
 	dashboardService := services.NewDashboardService(db, invoiceService)
+
+	expenseService.SetAttachmentService(attachmentService)
+	incomeService.SetAttachmentService(attachmentService)
+	invoiceService.SetAttachmentService(attachmentService)
 
 	if _, err := invoiceService.UpdateOverdueStatuses(context.Background()); err != nil {
 		log.Printf("Warning: failed to update overdue invoices on startup: %v", err)
@@ -78,6 +87,9 @@ func main() {
 
 	invoiceHandler := handlers.NewInvoiceHandler(invoiceService)
 	invoiceHandler.RegisterRoutes(protectedMux)
+
+	attachmentHandler := handlers.NewAttachmentHandler(attachmentService)
+	attachmentHandler.RegisterRoutes(protectedMux)
 
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 	dashboardHandler.RegisterRoutes(protectedMux)

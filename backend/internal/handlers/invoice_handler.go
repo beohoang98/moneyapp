@@ -18,6 +18,7 @@ func NewInvoiceHandler(is *services.InvoiceService) *InvoiceHandler {
 
 func (h *InvoiceHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/invoices/stats", h.handleStats)
+	mux.HandleFunc("POST /api/invoices/check-overdue", h.handleCheckOverdue)
 	mux.HandleFunc("POST /api/invoices", h.handleCreate)
 	mux.HandleFunc("GET /api/invoices", h.handleList)
 	mux.HandleFunc("GET /api/invoices/{id}", h.handleGet)
@@ -196,12 +197,19 @@ func (h *InvoiceHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
 
+	dateField := q.Get("date_field")
+	if dateField != "" && dateField != "issue_date" && dateField != "due_date" {
+		respondError(w, http.StatusBadRequest, "date_field must be 'issue_date' or 'due_date'")
+		return
+	}
+
 	params := services.InvoiceListParams{
-		Page:     page,
-		PerPage:  perPage,
-		Status:   q.Get("status"),
-		DateFrom: q.Get("date_from"),
-		DateTo:   q.Get("date_to"),
+		Page:      page,
+		PerPage:   perPage,
+		Status:    q.Get("status"),
+		DateFrom:  q.Get("date_from"),
+		DateTo:    q.Get("date_to"),
+		DateField: dateField,
 	}
 
 	if e := validateOptionalISODate("date_from", params.DateFrom); e != nil {
@@ -239,6 +247,15 @@ func (h *InvoiceHandler) handleList(w http.ResponseWriter, r *http.Request) {
 		Page:        params.Page,
 		PerPage:     params.PerPage,
 	})
+}
+
+func (h *InvoiceHandler) handleCheckOverdue(w http.ResponseWriter, r *http.Request) {
+	count, err := h.invoiceService.UpdateOverdueStatuses(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to check overdue invoices")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]int64{"updated_count": count})
 }
 
 func (h *InvoiceHandler) handleStats(w http.ResponseWriter, r *http.Request) {

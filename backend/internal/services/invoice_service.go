@@ -2,20 +2,21 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 
 	"github.com/beohoang98/moneyapp/internal/models"
+	"gorm.io/gorm"
 )
 
 type InvoiceListParams struct {
-	Page     int
-	PerPage  int
-	Status   string
-	DateFrom string
-	DateTo   string
+	Page      int
+	PerPage   int
+	Status    string
+	DateFrom  string
+	DateTo    string
+	DateField string
 }
 
 type InvoiceListResult struct {
@@ -25,11 +26,16 @@ type InvoiceListResult struct {
 }
 
 type InvoiceService struct {
-	db *sql.DB
+	db                *gorm.DB
+	attachmentService *AttachmentService
 }
 
-func NewInvoiceService(db *sql.DB) *InvoiceService {
+func NewInvoiceService(db *gorm.DB) *InvoiceService {
 	return &InvoiceService{db: db}
+}
+
+func (s *InvoiceService) SetAttachmentService(as *AttachmentService) {
+	s.attachmentService = as
 }
 
 func (s *InvoiceService) Create(ctx context.Context, inv *models.Invoice) error {
@@ -55,30 +61,16 @@ func (s *InvoiceService) Create(ctx context.Context, inv *models.Invoice) error 
 		return fmt.Errorf("status must be unpaid, paid, or overdue")
 	}
 
-	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO invoices (vendor_name, amount, issue_date, due_date, status, description) VALUES (?, ?, ?, ?, ?, ?)`,
-		inv.VendorName, inv.Amount, inv.IssueDate, inv.DueDate, inv.Status, inv.Description,
-	)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(inv).Error; err != nil {
 		return fmt.Errorf("insert invoice: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("get last insert id: %w", err)
-	}
-	inv.ID = id
 	return nil
 }
 
 func (s *InvoiceService) GetByID(ctx context.Context, id int64) (*models.Invoice, error) {
 	var inv models.Invoice
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, vendor_name, amount, issue_date, due_date, status, description, created_at, updated_at
-		 FROM invoices WHERE id = ?`, id,
-	).Scan(&inv.ID, &inv.VendorName, &inv.Amount, &inv.IssueDate, &inv.DueDate, &inv.Status, &inv.Description, &inv.CreatedAt, &inv.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	if err := s.db.WithContext(ctx).First(&inv, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("query invoice: %w", err)
@@ -113,65 +105,76 @@ func (s *InvoiceService) Update(ctx context.Context, id int64, inv *models.Invoi
 		return fmt.Errorf("status must be unpaid, paid, or overdue")
 	}
 
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE invoices SET vendor_name = ?, amount = ?, issue_date = ?, due_date = ?, status = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		inv.VendorName, inv.Amount, inv.IssueDate, inv.DueDate, inv.Status, inv.Description, id,
-	)
-	if err != nil {
-		return fmt.Errorf("update invoice: %w", err)
+	result := s.db.WithContext(ctx).Model(&models.Invoice{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"vendor_name": inv.VendorName,
+			"amount":      inv.Amount,
+			"issue_date":  inv.IssueDate,
+			"due_date":    inv.DueDate,
+			"status":      inv.Status,
+			"description": inv.Description,
+			"updated_at":  gorm.Expr("CURRENT_TIMESTAMP"),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update invoice: %w", result.Error)
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+	if result.RowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (s *InvoiceService) Delete(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM invoices WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("delete invoice: %w", err)
+	if s.attachmentService != nil {
+		if err := s.attachmentService.DeleteByEntity(ctx, "invoice", id); err != nil {
+			return fmt.Errorf("delete invoice attachments: %w", err)
+		}
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+
+	result := s.db.WithContext(ctx).Delete(&models.Invoice{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("delete invoice: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (s *InvoiceService) UpdateOverdueStatuses(ctx context.Context) (int64, error) {
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE invoices SET status = 'overdue', updated_at = CURRENT_TIMESTAMP WHERE status = 'unpaid' AND due_date < date('now')`,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("update overdue statuses: %w", err)
+	result := s.db.WithContext(ctx).Model(&models.Invoice{}).
+		Where("status = 'unpaid' AND due_date < date('now')").
+		Updates(map[string]interface{}{
+			"status":     "overdue",
+			"updated_at": gorm.Expr("CURRENT_TIMESTAMP"),
+		})
+	if result.Error != nil {
+		return 0, fmt.Errorf("update overdue statuses: %w", result.Error)
 	}
-	count, _ := result.RowsAffected()
-	if count > 0 {
-		log.Printf("Updated %d invoices to overdue status", count)
+	if result.RowsAffected > 0 {
+		log.Printf("Updated %d invoices to overdue status", result.RowsAffected)
 	}
-	return count, nil
+	return result.RowsAffected, nil
 }
 
 func (s *InvoiceService) MarkAsPaid(ctx context.Context, id int64) (*models.Invoice, error) {
-	var currentStatus string
-	err := s.db.QueryRowContext(ctx, "SELECT status FROM invoices WHERE id = ?", id).Scan(&currentStatus)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var inv models.Invoice
+	if err := s.db.WithContext(ctx).Select("status").First(&inv, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("query invoice status: %w", err)
 	}
-	if currentStatus == "paid" {
+	if inv.Status == "paid" {
 		return nil, fmt.Errorf("invoice is already paid")
 	}
 
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE invoices SET status = 'paid', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("mark invoice as paid: %w", err)
-	}
+	s.db.WithContext(ctx).Model(&models.Invoice{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":     "paid",
+			"updated_at": gorm.Expr("CURRENT_TIMESTAMP"),
+		})
+
 	return s.GetByID(ctx, id)
 }
 
@@ -190,42 +193,35 @@ func (s *InvoiceService) List(ctx context.Context, params InvoiceListParams) (*I
 		log.Printf("Warning: failed to update overdue statuses: %v", err)
 	}
 
-	where, args := buildInvoiceWhere(params)
+	base := s.db.WithContext(ctx).Model(&models.Invoice{})
+	base = applyInvoiceFilters(base, params)
 
 	var total int64
-	var totalAmount sql.NullInt64
-	countQuery := "SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM invoices" + where
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total, &totalAmount); err != nil {
+	var totalAmount *int64
+	row := base.Select("COUNT(*), COALESCE(SUM(amount), 0)").Row()
+	if err := row.Scan(&total, &totalAmount); err != nil {
 		return nil, fmt.Errorf("count invoices: %w", err)
 	}
 
 	offset := (params.Page - 1) * params.PerPage
-	query := `SELECT id, vendor_name, amount, issue_date, due_date, status, description, created_at, updated_at
-		FROM invoices` + where + ` ORDER BY due_date ASC, id DESC LIMIT ? OFFSET ?`
-	args = append(args, params.PerPage, offset)
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query invoices: %w", err)
-	}
-	defer rows.Close()
 
 	var invoices []models.Invoice
-	for rows.Next() {
-		var inv models.Invoice
-		if err := rows.Scan(&inv.ID, &inv.VendorName, &inv.Amount, &inv.IssueDate, &inv.DueDate, &inv.Status, &inv.Description, &inv.CreatedAt, &inv.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan invoice: %w", err)
-		}
-		invoices = append(invoices, inv)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate invoices: %w", err)
+	q := s.db.WithContext(ctx).Model(&models.Invoice{})
+	q = applyInvoiceFilters(q, params)
+	if err := q.Order("due_date ASC, id DESC").
+		Limit(params.PerPage).Offset(offset).
+		Find(&invoices).Error; err != nil {
+		return nil, fmt.Errorf("query invoices: %w", err)
 	}
 
+	amt := int64(0)
+	if totalAmount != nil {
+		amt = *totalAmount
+	}
 	return &InvoiceListResult{
 		Invoices:    invoices,
 		Total:       total,
-		TotalAmount: totalAmount.Int64,
+		TotalAmount: amt,
 	}, nil
 }
 
@@ -234,62 +230,51 @@ func (s *InvoiceService) GetStats(ctx context.Context) (*models.InvoiceStats, er
 		log.Printf("Warning: failed to update overdue statuses: %v", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT status, COUNT(*), COALESCE(SUM(amount), 0) FROM invoices WHERE status IN ('unpaid', 'overdue') GROUP BY status`,
-	)
+	type statusRow struct {
+		Status string
+		Cnt    int
+		Amt    int64
+	}
+	var rows []statusRow
+	err := s.db.WithContext(ctx).Model(&models.Invoice{}).
+		Select("status, COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS amt").
+		Where("status IN ('unpaid', 'overdue')").
+		Group("status").
+		Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("query invoice stats: %w", err)
 	}
-	defer rows.Close()
 
 	stats := &models.InvoiceStats{}
-	for rows.Next() {
-		var status string
-		var count int
-		var amount int64
-		if err := rows.Scan(&status, &count, &amount); err != nil {
-			return nil, fmt.Errorf("scan invoice stats: %w", err)
-		}
-		switch status {
+	for _, r := range rows {
+		switch r.Status {
 		case "unpaid":
-			stats.UnpaidCount = count
-			stats.UnpaidAmount = amount
-			stats.TotalOutstanding += amount
+			stats.UnpaidCount = r.Cnt
+			stats.UnpaidAmount = r.Amt
+			stats.TotalOutstanding += r.Amt
 		case "overdue":
-			stats.OverdueCount = count
-			stats.OverdueAmount = amount
-			stats.TotalOutstanding += amount
+			stats.OverdueCount = r.Cnt
+			stats.OverdueAmount = r.Amt
+			stats.TotalOutstanding += r.Amt
 		}
 	}
-	return stats, rows.Err()
+	return stats, nil
 }
 
-func buildInvoiceWhere(params InvoiceListParams) (string, []interface{}) {
-	var conditions []string
-	var args []interface{}
+func applyInvoiceFilters(q *gorm.DB, params InvoiceListParams) *gorm.DB {
+	dateCol := "due_date"
+	if params.DateField == "issue_date" {
+		dateCol = "issue_date"
+	}
 
 	if params.Status != "" {
-		conditions = append(conditions, "status = ?")
-		args = append(args, params.Status)
+		q = q.Where("status = ?", params.Status)
 	}
 	if params.DateFrom != "" {
-		conditions = append(conditions, "due_date >= ?")
-		args = append(args, params.DateFrom)
+		q = q.Where(dateCol+" >= ?", params.DateFrom)
 	}
 	if params.DateTo != "" {
-		conditions = append(conditions, "due_date <= ?")
-		args = append(args, params.DateTo)
+		q = q.Where(dateCol+" <= ?", params.DateTo)
 	}
-
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE "
-		for i, c := range conditions {
-			if i > 0 {
-				where += " AND "
-			}
-			where += c
-		}
-	}
-	return where, args
+	return q
 }

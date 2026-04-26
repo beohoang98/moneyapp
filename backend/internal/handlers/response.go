@@ -78,6 +78,10 @@ func clampPagePerPage(page, perPage int) (int, int) {
 	return page, perPage
 }
 
+func copyBuffer(dst io.Writer, src io.Reader) (int64, error) {
+	return io.Copy(dst, src)
+}
+
 // validateOptionalISODate returns an error if value is non-empty and not YYYY-MM-DD.
 func validateOptionalISODate(paramName, value string) error {
 	if value == "" {

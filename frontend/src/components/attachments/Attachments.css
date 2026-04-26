@@ -1,0 +1,168 @@
+.file-upload {
+  margin-top: 12px;
+}
+
+.file-upload__dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  padding: 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--code-bg);
+}
+
+.file-upload__dropzone:hover,
+.file-upload__dropzone--active {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.file-upload__label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.file-upload__label small {
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.7;
+}
+
+.file-upload__progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.file-upload__progress-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.file-upload__error {
+  margin-top: 8px;
+  color: #ef4444;
+  font-size: 13px;
+}
+
+.attachment-list {
+  margin-top: 16px;
+}
+
+.attachment-list__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.attachment-list__items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.attachment-item__preview {
+  flex-shrink: 0;
+}
+
+.attachment-item__thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.attachment-item__icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  font-weight: 700;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.attachment-item__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-item__name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-h);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attachment-item__size {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.attachment-item__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.attachments-loading {
+  font-size: 13px;
+  color: var(--text);
+  padding: 8px 0;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  cursor: pointer;
+}
+
+.lightbox__image {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.attachment-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text);
+  opacity: 0.7;
+}

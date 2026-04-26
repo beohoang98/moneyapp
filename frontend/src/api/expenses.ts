@@ -17,6 +17,8 @@ interface ExpenseListParams {
   date_to?: string
   category_id?: number
   category_ids?: number[]
+  sort_by?: string
+  sort_order?: string
 }
 
 export async function getExpenses(params: ExpenseListParams = {}): Promise<ExpenseListResponse> {
@@ -27,6 +29,8 @@ export async function getExpenses(params: ExpenseListParams = {}): Promise<Expen
   if (params.date_to) searchParams.set('date_to', params.date_to)
   if (params.category_id) searchParams.set('category_id', String(params.category_id))
   if (params.category_ids?.length) searchParams.set('category_ids', params.category_ids.join(','))
+  if (params.sort_by) searchParams.set('sort_by', params.sort_by)
+  if (params.sort_order) searchParams.set('sort_order', params.sort_order)
 
   const qs = searchParams.toString()
   return apiClient.get<ExpenseListResponse>(`/expenses${qs ? '?' + qs : ''}`)

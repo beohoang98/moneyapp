@@ -5,6 +5,8 @@ import { ExpenseForm } from '../components/expenses/ExpenseForm'
 import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { CategoryFilter } from '../components/filters/CategoryFilter'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FileUpload } from '../components/attachments/FileUpload'
+import { AttachmentList } from '../components/attachments/AttachmentList'
 import { useToast } from '../hooks/useToast'
 import { formatAmount, formatDisplayDate } from '../utils/format'
 import type { Expense } from '../types/expense'
@@ -20,18 +22,30 @@ export function ExpensesPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingExpense, setEditingExpense] = useState<Expense | undefined>()
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
+  const [detailTarget, setDetailTarget] = useState<Expense | null>(null)
+  const [attachmentRefresh, setAttachmentRefresh] = useState(0)
   const { addToast } = useToast()
 
   const dateFrom = searchParams.get('date_from') ?? ''
   const dateTo = searchParams.get('date_to') ?? ''
   const categoryId = searchParams.get('category_id') ? Number(searchParams.get('category_id')) : undefined
+  const sortBy = searchParams.get('sort_by') ?? 'date'
+  const sortOrder = searchParams.get('sort_order') ?? 'desc'
   const perPage = 20
 
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
-    getExpenses({ page, per_page: perPage, date_from: dateFrom || undefined, date_to: dateTo || undefined, category_id: categoryId })
+    getExpenses({
+      page,
+      per_page: perPage,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      category_id: categoryId,
+      sort_by: sortBy,
+      sort_order: sortOrder,
+    })
       .then((result) => {
         if (cancelled) return
         setExpenses(result.data)
@@ -45,7 +59,7 @@ export function ExpensesPage() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [page, dateFrom, dateTo, categoryId, refreshKey, addToast])
+  }, [page, dateFrom, dateTo, categoryId, sortBy, sortOrder, refreshKey, addToast])
 
   const refreshList = () => { setLoading(true); setRefreshKey((k) => k + 1) }
 
@@ -66,6 +80,17 @@ export function ExpensesPage() {
   const handleCategoryChange = (catId: number | undefined) => {
     setLoading(true); setPage(1)
     updateParams({ category_id: catId ? String(catId) : '', page: '' })
+  }
+
+  const handleSort = (column: 'date' | 'amount') => {
+    const newOrder = sortBy === column && sortOrder === 'desc' ? 'asc' : 'desc'
+    setLoading(true)
+    updateParams({ sort_by: column, sort_order: newOrder, page: '' })
+  }
+
+  const sortIndicator = (col: string) => {
+    if (sortBy !== col) return ''
+    return sortOrder === 'asc' ? ' \u25B2' : ' \u25BC'
   }
 
   const handlePageChange = (newPage: number) => {
@@ -140,10 +165,14 @@ export function ExpensesPage() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Date</th>
+                <th className="sortable-header" onClick={() => handleSort('date')} style={{ cursor: 'pointer' }}>
+                  Date{sortIndicator('date')}
+                </th>
                 <th>Category</th>
                 <th>Description</th>
-                <th style={{ textAlign: 'right' }}>Amount</th>
+                <th className="sortable-header" onClick={() => handleSort('amount')} style={{ textAlign: 'right', cursor: 'pointer' }}>
+                  Amount{sortIndicator('amount')}
+                </th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
@@ -155,8 +184,9 @@ export function ExpensesPage() {
                   <td>{e.description}</td>
                   <td className="amount">{formatAmount(e.amount)}</td>
                   <td className="actions">
-                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingExpense(e); setShowForm(true) }} title="Edit">✏️</button>
-                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(e)} title="Delete">🗑️</button>
+                    <button className="btn btn-sm" onClick={() => setDetailTarget(e)} title="Attachments">Files</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingExpense(e); setShowForm(true) }} title="Edit">Edit</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(e)} title="Delete">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -182,6 +212,27 @@ export function ExpensesPage() {
               expense={editingExpense}
               onSubmit={editingExpense ? handleUpdate : handleCreate}
               onCancel={() => { setShowForm(false); setEditingExpense(undefined) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {detailTarget && (
+        <div className="form-modal-overlay" onClick={() => setDetailTarget(null)}>
+          <div className="form-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Expense Attachments</h2>
+            <p style={{ fontSize: 14, color: 'var(--text)' }}>
+              {formatDisplayDate(detailTarget.date)} &mdash; {formatAmount(detailTarget.amount)}
+            </p>
+            <FileUpload
+              entityType="expense"
+              entityId={detailTarget.id}
+              onUploaded={() => setAttachmentRefresh((k) => k + 1)}
+            />
+            <AttachmentList
+              entityType="expense"
+              entityId={detailTarget.id}
+              refreshKey={attachmentRefresh}
             />
           </div>
         </div>

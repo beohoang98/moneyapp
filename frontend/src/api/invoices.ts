@@ -16,6 +16,7 @@ interface InvoiceListParams {
   status?: string
   date_from?: string
   date_to?: string
+  date_field?: string
 }
 
 interface InvoiceStats {
@@ -33,6 +34,7 @@ export async function getInvoices(params: InvoiceListParams = {}): Promise<Invoi
   if (params.status) searchParams.set('status', params.status)
   if (params.date_from) searchParams.set('date_from', params.date_from)
   if (params.date_to) searchParams.set('date_to', params.date_to)
+  if (params.date_field) searchParams.set('date_field', params.date_field)
 
   const qs = searchParams.toString()
   return apiClient.get<InvoiceListResponse>(`/invoices${qs ? '?' + qs : ''}`)

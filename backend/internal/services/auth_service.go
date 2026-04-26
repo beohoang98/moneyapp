@@ -2,13 +2,14 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
+	"github.com/beohoang98/moneyapp/internal/models"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var (
@@ -18,12 +19,12 @@ var (
 )
 
 type AuthService struct {
-	db          *sql.DB
+	db          *gorm.DB
 	jwtSecret   []byte
 	tokenExpiry time.Duration
 }
 
-func NewAuthService(db *sql.DB, jwtSecret string, tokenExpiryHours int) *AuthService {
+func NewAuthService(db *gorm.DB, jwtSecret string, tokenExpiryHours int) *AuthService {
 	return &AuthService{
 		db:          db,
 		jwtSecret:   []byte(jwtSecret),
@@ -37,26 +38,21 @@ type LoginResult struct {
 }
 
 func (s *AuthService) Login(ctx context.Context, username, password string) (*LoginResult, error) {
-	var userID int64
-	var passwordHash string
-
-	err := s.db.QueryRowContext(ctx,
-		"SELECT id, password_hash FROM users WHERE username = ?", username,
-	).Scan(&userID, &passwordHash)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var user models.User
+	if err := s.db.WithContext(ctx).Where("username = ?", username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrInvalidCredentials
 		}
 		return nil, fmt.Errorf("query user: %w", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		return nil, ErrInvalidCredentials
 	}
 
 	expiresAt := time.Now().Add(s.tokenExpiry)
 	claims := jwt.MapClaims{
-		"sub": userID,
+		"sub": user.ID,
 		"iat": time.Now().Unix(),
 		"exp": expiresAt.Unix(),
 	}

@@ -5,15 +5,17 @@ import (
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:?_foreign_keys=on")
+	rawDB, err := sql.Open("sqlite3", ":memory:?_foreign_keys=on")
 	if err != nil {
 		t.Fatalf("open test db: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
 
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS users (
@@ -32,11 +34,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE UNIQUE INDEX idx_categories_name_type ON categories(name, type)`,
-		// Expense categories
 		`INSERT INTO categories (name, type, is_default) VALUES ('Food', 'expense', 1)`,
 		`INSERT INTO categories (name, type, is_default) VALUES ('Transport', 'expense', 1)`,
 		`INSERT INTO categories (name, type, is_default) VALUES ('Uncategorized', 'expense', 1)`,
-		// Income categories
 		`INSERT INTO categories (name, type, is_default) VALUES ('Salary', 'income', 1)`,
 		`INSERT INTO categories (name, type, is_default) VALUES ('Freelance', 'income', 1)`,
 		`INSERT INTO categories (name, type, is_default) VALUES ('Uncategorized', 'income', 1)`,
@@ -72,10 +72,19 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	for _, m := range migrations {
-		if _, err := db.Exec(m); err != nil {
+		if _, err := rawDB.Exec(m); err != nil {
 			t.Fatalf("apply migration: %v\nSQL: %s", err, m)
 		}
 	}
+
+	db, err := gorm.Open(sqlite.Dialector{Conn: rawDB}, &gorm.Config{
+		Logger:                 logger.Default.LogMode(logger.Silent),
+		SkipDefaultTransaction: true,
+	})
+	if err != nil {
+		t.Fatalf("open gorm: %v", err)
+	}
+	t.Cleanup(func() { rawDB.Close() })
 
 	return db
 }

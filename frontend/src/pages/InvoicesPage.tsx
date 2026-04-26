@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getInvoices, createInvoice, updateInvoice, deleteInvoice, markInvoiceAsPaid, getInvoiceStats } from '../api/invoices'
 import { InvoiceForm } from '../components/invoices/InvoiceForm'
+import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FileUpload } from '../components/attachments/FileUpload'
+import { AttachmentList } from '../components/attachments/AttachmentList'
 import { useToast } from '../hooks/useToast'
 import { formatAmount, formatDisplayDate } from '../utils/format'
 import type { Invoice } from '../types/invoice'
@@ -25,10 +28,15 @@ export function InvoicesPage() {
   const [editingInvoice, setEditingInvoice] = useState<Invoice | undefined>()
   const [deleteTarget, setDeleteTarget] = useState<Invoice | null>(null)
   const [payTarget, setPayTarget] = useState<Invoice | null>(null)
+  const [detailTarget, setDetailTarget] = useState<Invoice | null>(null)
+  const [attachmentRefresh, setAttachmentRefresh] = useState(0)
   const [stats, setStats] = useState<{ total_outstanding: number; unpaid_count: number; overdue_count: number } | null>(null)
   const { addToast } = useToast()
 
   const status = searchParams.get('status') ?? ''
+  const dateFrom = searchParams.get('date_from') ?? ''
+  const dateTo = searchParams.get('date_to') ?? ''
+  const dateField = searchParams.get('date_field') ?? 'due_date'
   const perPage = 20
 
   const [refreshKey, setRefreshKey] = useState(0)
@@ -36,7 +44,14 @@ export function InvoicesPage() {
   useEffect(() => {
     let cancelled = false
     Promise.all([
-      getInvoices({ page, per_page: perPage, status: status || undefined }),
+      getInvoices({
+        page,
+        per_page: perPage,
+        status: status || undefined,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+        date_field: dateField || undefined,
+      }),
       getInvoiceStats(),
     ])
       .then(([result, invoiceStats]) => {
@@ -52,7 +67,7 @@ export function InvoicesPage() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [page, status, refreshKey, addToast])
+  }, [page, status, dateFrom, dateTo, dateField, refreshKey, addToast])
 
   const refreshList = () => { setLoading(true); setRefreshKey((k) => k + 1) }
 
@@ -68,6 +83,16 @@ export function InvoicesPage() {
   const handleStatusChange = (newStatus: string) => {
     setLoading(true); setPage(1)
     updateParams({ status: newStatus, page: '' })
+  }
+
+  const handleDateChange = (from: string, to: string) => {
+    setLoading(true); setPage(1)
+    updateParams({ date_from: from, date_to: to, page: '' })
+  }
+
+  const handleDateFieldChange = (field: string) => {
+    setLoading(true); setPage(1)
+    updateParams({ date_field: field, page: '' })
   }
 
   const handlePageChange = (newPage: number) => {
@@ -157,6 +182,22 @@ export function InvoicesPage() {
         ))}
       </div>
 
+      <div className="filter-bar">
+        <div className="filter-field">
+          <label>Filter by</label>
+          <select value={dateField} onChange={(e) => handleDateFieldChange(e.target.value)}>
+            <option value="due_date">Due Date</option>
+            <option value="issue_date">Issue Date</option>
+          </select>
+        </div>
+        <DateRangeFilter
+          dateFrom={dateFrom}
+          dateTo={dateTo}
+          onChange={handleDateChange}
+          onClear={() => handleDateChange('', '')}
+        />
+      </div>
+
       {loading ? (
         <div className="loading">Loading...</div>
       ) : invoices.length === 0 ? (
@@ -183,15 +224,16 @@ export function InvoicesPage() {
                   <td>{formatDisplayDate(inv.due_date)}</td>
                   <td>
                     <span className={`status-badge status-badge--${inv.status}`}>
-                      {inv.status === 'overdue' && '⚠ '}{inv.status}
+                      {inv.status}
                     </span>
                   </td>
                   <td className="actions">
+                    <button className="btn btn-sm" onClick={() => setDetailTarget(inv)} title="Attachments">Files</button>
                     {(inv.status === 'unpaid' || inv.status === 'overdue') && (
-                      <button className="btn btn-sm" onClick={() => setPayTarget(inv)} title="Mark as Paid">✓ Paid</button>
+                      <button className="btn btn-sm" onClick={() => setPayTarget(inv)} title="Mark as Paid">Paid</button>
                     )}
-                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingInvoice(inv); setShowForm(true) }} title="Edit">✏️</button>
-                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(inv)} title="Delete">🗑️</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => { setEditingInvoice(inv); setShowForm(true) }} title="Edit">Edit</button>
+                    <button className="btn btn-sm btn-icon" onClick={() => setDeleteTarget(inv)} title="Delete">Delete</button>
                   </td>
                 </tr>
               ))}
@@ -217,6 +259,27 @@ export function InvoicesPage() {
               invoice={editingInvoice}
               onSubmit={editingInvoice ? handleUpdate : handleCreate}
               onCancel={() => { setShowForm(false); setEditingInvoice(undefined) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {detailTarget && (
+        <div className="form-modal-overlay" onClick={() => setDetailTarget(null)}>
+          <div className="form-modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Invoice Attachments</h2>
+            <p style={{ fontSize: 14, color: 'var(--text)' }}>
+              {detailTarget.vendor_name} &mdash; {formatAmount(detailTarget.amount)}
+            </p>
+            <FileUpload
+              entityType="invoice"
+              entityId={detailTarget.id}
+              onUploaded={() => setAttachmentRefresh((k) => k + 1)}
+            />
+            <AttachmentList
+              entityType="invoice"
+              entityId={detailTarget.id}
+              refreshKey={attachmentRefresh}
             />
           </div>
         </div>

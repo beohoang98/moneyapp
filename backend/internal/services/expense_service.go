@@ -2,12 +2,12 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/beohoang98/moneyapp/internal/models"
+	"gorm.io/gorm"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -18,6 +18,8 @@ type ExpenseListParams struct {
 	DateFrom    string
 	DateTo      string
 	CategoryIDs []int64
+	SortBy      string
+	SortOrder   string
 }
 
 type ExpenseListResult struct {
@@ -27,12 +29,17 @@ type ExpenseListResult struct {
 }
 
 type ExpenseService struct {
-	db              *sql.DB
-	categoryService *CategoryService
+	db                *gorm.DB
+	categoryService   *CategoryService
+	attachmentService *AttachmentService
 }
 
-func NewExpenseService(db *sql.DB, cs *CategoryService) *ExpenseService {
+func NewExpenseService(db *gorm.DB, cs *CategoryService) *ExpenseService {
 	return &ExpenseService{db: db, categoryService: cs}
+}
+
+func (s *ExpenseService) SetAttachmentService(as *AttachmentService) {
+	s.attachmentService = as
 }
 
 func (s *ExpenseService) Create(ctx context.Context, e *models.Expense) error {
@@ -46,34 +53,32 @@ func (s *ExpenseService) Create(ctx context.Context, e *models.Expense) error {
 		return err
 	}
 
-	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO expenses (amount, date, category_id, description) VALUES (?, ?, ?, ?)`,
-		e.Amount, e.Date, e.CategoryID, e.Description,
-	)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(e).Error; err != nil {
 		return fmt.Errorf("insert expense: %w", err)
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("get last insert id: %w", err)
-	}
-	e.ID = id
 	return nil
 }
 
 func (s *ExpenseService) GetByID(ctx context.Context, id int64) (*models.Expense, error) {
-	var e models.Expense
-	err := s.db.QueryRowContext(ctx,
-		`SELECT e.id, e.amount, e.date, e.category_id, COALESCE(c.name, ''), e.description, e.created_at, e.updated_at
-		 FROM expenses e LEFT JOIN categories c ON e.category_id = c.id WHERE e.id = ?`, id,
-	).Scan(&e.ID, &e.Amount, &e.Date, &e.CategoryID, &e.CategoryName, &e.Description, &e.CreatedAt, &e.UpdatedAt)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("query expense: %w", err)
+	type row struct {
+		models.Expense
+		CategoryName string `gorm:"column:category_name"`
 	}
+	var r row
+	result := s.db.WithContext(ctx).
+		Table("expenses").
+		Select("expenses.*, COALESCE(categories.name, '') AS category_name").
+		Joins("LEFT JOIN categories ON expenses.category_id = categories.id").
+		Where("expenses.id = ?", id).
+		Scan(&r)
+	if result.Error != nil {
+		return nil, fmt.Errorf("query expense: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return nil, ErrNotFound
+	}
+	e := r.Expense
+	e.CategoryName = r.CategoryName
 	return &e, nil
 }
 
@@ -88,27 +93,35 @@ func (s *ExpenseService) Update(ctx context.Context, id int64, e *models.Expense
 		return err
 	}
 
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE expenses SET amount = ?, date = ?, category_id = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		e.Amount, e.Date, e.CategoryID, e.Description, id,
-	)
-	if err != nil {
-		return fmt.Errorf("update expense: %w", err)
+	result := s.db.WithContext(ctx).Model(&models.Expense{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"amount":      e.Amount,
+			"date":        e.Date,
+			"category_id": e.CategoryID,
+			"description": e.Description,
+			"updated_at":  gorm.Expr("CURRENT_TIMESTAMP"),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update expense: %w", result.Error)
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+	if result.RowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
 }
 
 func (s *ExpenseService) Delete(ctx context.Context, id int64) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM expenses WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("delete expense: %w", err)
+	if s.attachmentService != nil {
+		if err := s.attachmentService.DeleteByEntity(ctx, "expense", id); err != nil {
+			return fmt.Errorf("delete expense attachments: %w", err)
+		}
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+
+	result := s.db.WithContext(ctx).Delete(&models.Expense{}, id)
+	if result.Error != nil {
+		return fmt.Errorf("delete expense: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -125,78 +138,78 @@ func (s *ExpenseService) List(ctx context.Context, params ExpenseListParams) (*E
 		params.PerPage = 100
 	}
 
-	where, args := buildExpenseWhere(params)
+	base := s.db.WithContext(ctx).Model(&models.Expense{}).Table("expenses AS e")
+	base = applyExpenseFilters(base, params)
 
 	var total int64
-	var totalAmount sql.NullInt64
-	countQuery := "SELECT COUNT(*), COALESCE(SUM(e.amount), 0) FROM expenses e" + where
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total, &totalAmount); err != nil {
+	var totalAmount *int64
+	countRow := base.Select("COUNT(*), COALESCE(SUM(e.amount), 0)").Row()
+	if err := countRow.Scan(&total, &totalAmount); err != nil {
 		return nil, fmt.Errorf("count expenses: %w", err)
 	}
 
 	offset := (params.Page - 1) * params.PerPage
-	query := `SELECT e.id, e.amount, e.date, e.category_id, COALESCE(c.name, ''), e.description, e.created_at, e.updated_at
-		FROM expenses e LEFT JOIN categories c ON e.category_id = c.id` + where + ` ORDER BY e.date DESC, e.id DESC LIMIT ? OFFSET ?`
-	args = append(args, params.PerPage, offset)
+	orderClause := buildExpenseOrderClause(params)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	type expenseRow struct {
+		models.Expense
+		CategoryName string `gorm:"column:category_name"`
+	}
+	var rows []expenseRow
+	err := s.db.WithContext(ctx).Table("expenses AS e").
+		Select("e.*, COALESCE(c.name, '') AS category_name").
+		Joins("LEFT JOIN categories c ON e.category_id = c.id").
+		Scopes(func(q *gorm.DB) *gorm.DB { return applyExpenseFilters(q, params) }).
+		Order(orderClause).
+		Limit(params.PerPage).Offset(offset).
+		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("query expenses: %w", err)
 	}
-	defer rows.Close()
 
-	var expenses []models.Expense
-	for rows.Next() {
-		var e models.Expense
-		if err := rows.Scan(&e.ID, &e.Amount, &e.Date, &e.CategoryID, &e.CategoryName, &e.Description, &e.CreatedAt, &e.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan expense: %w", err)
-		}
-		expenses = append(expenses, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate expenses: %w", err)
+	expenses := make([]models.Expense, len(rows))
+	for i, r := range rows {
+		expenses[i] = r.Expense
+		expenses[i].CategoryName = r.CategoryName
 	}
 
+	amt := int64(0)
+	if totalAmount != nil {
+		amt = *totalAmount
+	}
 	return &ExpenseListResult{
 		Expenses:    expenses,
 		Total:       total,
-		TotalAmount: totalAmount.Int64,
+		TotalAmount: amt,
 	}, nil
 }
 
-func buildExpenseWhere(params ExpenseListParams) (string, []interface{}) {
-	var conditions []string
-	var args []interface{}
-
+func applyExpenseFilters(q *gorm.DB, params ExpenseListParams) *gorm.DB {
 	if params.DateFrom != "" {
-		conditions = append(conditions, "e.date >= ?")
-		args = append(args, params.DateFrom)
+		q = q.Where("e.date >= ?", params.DateFrom)
 	}
 	if params.DateTo != "" {
-		conditions = append(conditions, "e.date <= ?")
-		args = append(args, params.DateTo)
+		q = q.Where("e.date <= ?", params.DateTo)
 	}
 	if len(params.CategoryIDs) > 0 {
-		placeholders := ""
-		for i, id := range params.CategoryIDs {
-			if i > 0 {
-				placeholders += ","
-			}
-			placeholders += "?"
-			args = append(args, id)
-		}
-		conditions = append(conditions, "e.category_id IN ("+placeholders+")")
+		q = q.Where("e.category_id IN ?", params.CategoryIDs)
+	}
+	return q
+}
+
+func buildExpenseOrderClause(params ExpenseListParams) string {
+	col := "e.date"
+	switch params.SortBy {
+	case "amount":
+		col = "e.amount"
+	case "date":
+		col = "e.date"
 	}
 
-	where := ""
-	if len(conditions) > 0 {
-		where = " WHERE "
-		for i, c := range conditions {
-			if i > 0 {
-				where += " AND "
-			}
-			where += c
-		}
+	dir := "DESC"
+	if params.SortOrder == "asc" {
+		dir = "ASC"
 	}
-	return where, args
+
+	return fmt.Sprintf("%s %s, e.id DESC", col, dir)
 }

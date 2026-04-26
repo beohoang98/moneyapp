@@ -2,19 +2,19 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"time"
 
 	"github.com/beohoang98/moneyapp/internal/models"
+	"gorm.io/gorm"
 )
 
 type DashboardService struct {
-	db             *sql.DB
+	db             *gorm.DB
 	invoiceService *InvoiceService
 }
 
-func NewDashboardService(db *sql.DB, invoiceService *InvoiceService) *DashboardService {
+func NewDashboardService(db *gorm.DB, invoiceService *InvoiceService) *DashboardService {
 	return &DashboardService{db: db, invoiceService: invoiceService}
 }
 
@@ -27,20 +27,18 @@ func (s *DashboardService) GetSummary(ctx context.Context, dateFrom, dateTo stri
 	}
 
 	var totalExpenses int64
-	err := s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE date BETWEEN ? AND ?",
-		dateFrom, dateTo,
-	).Scan(&totalExpenses)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.Expense{}).
+		Where("date BETWEEN ? AND ?", dateFrom, dateTo).
+		Select("COALESCE(SUM(amount), 0)").
+		Row().Scan(&totalExpenses); err != nil {
 		return nil, fmt.Errorf("sum expenses: %w", err)
 	}
 
 	var totalIncome int64
-	err = s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(amount), 0) FROM incomes WHERE date BETWEEN ? AND ?",
-		dateFrom, dateTo,
-	).Scan(&totalIncome)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Model(&models.Income{}).
+		Where("date BETWEEN ? AND ?", dateFrom, dateTo).
+		Select("COALESCE(SUM(amount), 0)").
+		Row().Scan(&totalIncome); err != nil {
 		return nil, fmt.Errorf("sum incomes: %w", err)
 	}
 

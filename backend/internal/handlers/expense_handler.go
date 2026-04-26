@@ -150,11 +150,24 @@ func (h *ExpenseHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	page, _ := strconv.Atoi(q.Get("page"))
 	perPage, _ := strconv.Atoi(q.Get("per_page"))
 
+	sortBy := q.Get("sort_by")
+	if sortBy != "" && sortBy != "date" && sortBy != "amount" {
+		respondError(w, http.StatusBadRequest, "sort_by must be 'date' or 'amount'")
+		return
+	}
+	sortOrder := q.Get("sort_order")
+	if sortOrder != "" && sortOrder != "asc" && sortOrder != "desc" {
+		respondError(w, http.StatusBadRequest, "sort_order must be 'asc' or 'desc'")
+		return
+	}
+
 	params := services.ExpenseListParams{
-		Page:     page,
-		PerPage:  perPage,
-		DateFrom: q.Get("date_from"),
-		DateTo:   q.Get("date_to"),
+		Page:      page,
+		PerPage:   perPage,
+		DateFrom:  q.Get("date_from"),
+		DateTo:    q.Get("date_to"),
+		SortBy:    sortBy,
+		SortOrder: sortOrder,
 	}
 
 	if e := validateOptionalISODate("date_from", params.DateFrom); e != nil {
