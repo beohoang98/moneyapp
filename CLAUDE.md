@@ -9,6 +9,7 @@ MoneyApp is a personal finance web app — expenses, incomes, invoices/bills wit
 ## Development Commands
 
 ### Backend (Go)
+SQLite uses CGO (`mattn/go-sqlite3`). If `go run` fails opening the DB, use `CGO_ENABLED=1` (default on most macOS/Linux installs when a C toolchain is present).
 ```bash
 cd backend && go run ./cmd/server          # Run server (default port 8080, override with PORT env)
 cd backend && go test ./...                 # Run all tests
@@ -56,9 +57,10 @@ MinIO console: `http://localhost:9001` (user: `minioadmin`, pass: `minioadmin`)
 
 ## Custom Agents
 
-Three specialized agents are configured in `.claude/agents/`:
+Four specialized agents are configured in `.claude/agents/`:
 - **business-analyst** — Requirements analysis, feature planning, task breakdown
-- **fullstack-tech-lead** — Technical implementation across Go backend and React frontend
+- **fullstack-tech-lead** — Technical implementation and architecture across Go backend and React frontend
+- **code-reviewer** — Independent pre-merge review: same stack context as tech-lead, adversarial stance (risk, AC alignment, security, maintainability); default is review-only, not implementation
 - **qa-ux-tester** — Testing, UX review, Playwright automation, documentation review
 
 Invoke with `@"agent-name (agent)"` in conversation.

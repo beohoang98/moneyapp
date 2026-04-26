@@ -36,9 +36,13 @@ async function request<T>(
   })
 
   if (res.status === 401) {
+    const body: ApiError = await res.json().catch(() => ({ error: 'Unauthorized' }))
+    const isLogin = path === '/auth/login' || path.endsWith('/auth/login')
     localStorage.removeItem(TOKEN_KEY)
-    window.location.href = '/login'
-    throw new ApiClientError(401, 'Unauthorized')
+    if (!isLogin) {
+      window.location.href = '/login'
+    }
+    throw new ApiClientError(401, body.error)
   }
 
   if (!res.ok) {
@@ -70,6 +74,13 @@ export const apiClient = {
   put<T>(path: string, body: unknown): Promise<T> {
     return request<T>(path, {
       method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  },
+
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return request<T>(path, {
+      method: 'PATCH',
       body: JSON.stringify(body),
     })
   },

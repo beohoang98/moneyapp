@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/beohoang98/moneyapp/internal/config"
 	"github.com/beohoang98/moneyapp/internal/database"
 	"github.com/beohoang98/moneyapp/internal/handlers"
+	"github.com/beohoang98/moneyapp/internal/services"
 	"github.com/beohoang98/moneyapp/internal/storage"
 	"github.com/beohoang98/moneyapp/migrations"
 )
@@ -45,10 +47,47 @@ func main() {
 		log.Print("Storage: s3")
 	}
 
-	mux := http.NewServeMux()
+	authService := services.NewAuthService(db, cfg.JWTSecret, cfg.TokenExpiryHours)
+	categoryService := services.NewCategoryService(db)
+	expenseService := services.NewExpenseService(db, categoryService)
+	incomeService := services.NewIncomeService(db, categoryService)
+	invoiceService := services.NewInvoiceService(db)
+	dashboardService := services.NewDashboardService(db, invoiceService)
+
+	if _, err := invoiceService.UpdateOverdueStatuses(context.Background()); err != nil {
+		log.Printf("Warning: failed to update overdue invoices on startup: %v", err)
+	}
+
+	publicMux := http.NewServeMux()
+	protectedMux := http.NewServeMux()
 
 	healthHandler := handlers.NewHealthHandler(db, store, cfg.StorageType)
-	healthHandler.RegisterRoutes(mux)
+	healthHandler.RegisterRoutes(publicMux)
+
+	authHandler := handlers.NewAuthHandler(authService)
+	authHandler.RegisterRoutes(publicMux)
+
+	categoryHandler := handlers.NewCategoryHandler(categoryService)
+	categoryHandler.RegisterRoutes(protectedMux)
+
+	expenseHandler := handlers.NewExpenseHandler(expenseService)
+	expenseHandler.RegisterRoutes(protectedMux)
+
+	incomeHandler := handlers.NewIncomeHandler(incomeService)
+	incomeHandler.RegisterRoutes(protectedMux)
+
+	invoiceHandler := handlers.NewInvoiceHandler(invoiceService)
+	invoiceHandler.RegisterRoutes(protectedMux)
+
+	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
+	dashboardHandler.RegisterRoutes(protectedMux)
+
+	authMiddleware := handlers.AuthMiddleware(authService)
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/health", publicMux)
+	mux.Handle("/api/auth/", publicMux)
+	mux.Handle("/api/", authMiddleware(protectedMux))
 
 	frontendOrigin := "http://localhost:5173"
 	handler := handlers.LoggingMiddleware(

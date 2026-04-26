@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-All eight Milestone 0 tickets (M0-01 through M0-08) have been implemented and verified against the codebase. The backend infrastructure (migration runner, config loader, API middleware, health endpoint) and frontend shell (routing, layouts, pages, API client) are in place. Docker Compose now covers the full stack (MinIO + backend + frontend) with health-check dependency ordering, and a GitHub Actions CI pipeline covers lint, build, and test for both workstreams. The QA test plan (`docs/test-plans/milestone-0.md`) is complete and covers all eight tickets with 48 test cases and a documented automation backlog. Two minor deviations from ticket specs are noted below but do not block progression to Milestone 1.
+All eight Milestone 0 tickets (M0-01 through M0-08) have been implemented and verified against the codebase. The backend infrastructure (migration runner, config loader, API middleware, health endpoint) and frontend shell (routing, layouts, pages, API client) are in place. Docker Compose now covers the full stack (MinIO + backend + frontend) with health-check dependency ordering, and a GitHub Actions CI pipeline covers lint, build, and test for both workstreams. The QA test plan (`docs/test-plans/milestone-0.md`) is complete and covers all eight tickets with 48 test cases and a documented automation backlog. Two minor deviations from ticket specs are noted below but do not block progression to Milestone 1. Visual evidence from a live local run (2026-04-26) is captured as PNG screenshots in this folder — see **QA — Visual Verification (M0)** section below.
 
 ---
 
@@ -37,7 +37,7 @@ Evidence was gathered by inspecting file presence, content, and structure in the
 ## QA — Test Planning
 
 **Document**: [`docs/test-plans/milestone-0.md`](../test-plans/milestone-0.md)  
-**Status**: Draft (dated 2026-04-26)
+**Status**: Draft (dated 2026-04-26) — live visual verification of M0-04 routing scenarios completed 2026-04-26; see **QA — Visual Verification (M0)** section and PNG screenshots in this folder.
 
 | Ticket | Test Suite | Cases | AC Bullets Covered |
 |--------|------------|-------|--------------------|
@@ -71,12 +71,39 @@ None of the gaps represent missing test coverage for primary happy-path flows; a
 
 ---
 
+## QA — Visual Verification (M0)
+
+**Date**: 2026-04-26  
+**Method**: Cursor browser automation (cursor-ide-browser MCP) against a live local run — backend with `CGO_ENABLED=1 STORAGE_TYPE=local` on `:8080`, frontend via `npm run dev` on `:5173`.  
+**Health check**: `GET /api/health` returned `{"status":"ok","database":"ok","storage":"ok","storage_type":"local"}` (HTTP 200) confirming the full local stack was healthy before visual tests ran.
+
+All four required M0-04 routing scenarios were exercised and captured as screenshots. The app renders consistently: dark theme, purple brand accent, readable typography, no blank white screens or unstyled HTML on any route.
+
+**Checklist**
+
+- [x] `/` → redirects to `/dashboard` → `DashboardPage` inside `AppLayout` with sidebar showing all 6 nav links
+- [x] `/expenses` → `ExpensesPage` inside `AppLayout`; "Expenses" link in sidebar shows active/highlighted state
+- [x] `/login` → `LoginPage` inside `AuthLayout`; **no sidebar**; centered card layout with "MoneyApp" heading and "Sign In" sub-heading
+- [x] `/foo/bar` → `NotFoundPage` with "404" heading, "Page not found." message, and "Go to Dashboard" link; no sidebar
+- [x] `GET /api/health` → 200 OK, all four keys present (`status`, `database`, `storage`, `storage_type`)
+- [x] TS-04-06 — At **≤767px** viewport width the sidebar is **off-canvas** (drawer); a **☰** control opens it; main content uses full width. *(2026-04-26 follow-up: fixed flex layout — `Sidebar` previously returned a fragment, so `AppLayout`’s flex saw multiple children and reserved desktop width for the fixed `aside`.)*
+
+**Screenshots**
+
+![Dashboard (1280×800)](./m0-01-dashboard.png)
+![Expenses page (1280×800)](./m0-04-expenses.png)
+![Login page — AuthLayout, no sidebar (1280×800)](./m0-04-login.png)
+![NotFound page — bogus route /foo/bar (1280×800)](./m0-04-not-found.png)
+![Mobile viewport 375×812 — drawer closed; ☰ toggle visible (re-capture after layout fix recommended)](./m0-04-mobile-nav.png)
+![Health check endpoint JSON response](./m0-06-health-check.png)
+
+---
+
 ## Risks / Blockers / Follow-ups
 
 | Item | Severity | Detail |
 |------|----------|--------|
 | CI branch filter | Low | `ci.yml` only triggers on `main`-targeting pushes/PRs; feature branches are not gated. Expand trigger to cover all branches before M1 work begins. |
-| `decodeJSON` nil ResponseWriter | Low | `http.MaxBytesReader(nil, ...)` — update to pass `w` to restore automatic 413 behaviour on oversized payloads. |
 | JWT_SECRET policy | Low | Decide between "warn and continue with dev default" vs "fatal error in production" before M1 (auth endpoints depend on this). |
 | Tests not run in CI | Low | No automated tests exist yet; the Go test job in CI will pass vacuously until unit/integration tests are written. The automation backlog in the test plan addresses this. |
 | MinIO healthcheck image | Info | `mc` (MinIO client) may not be present in the `minio/minio:latest` image by default on all versions — validate `docker compose up` succeeds locally before M1. |

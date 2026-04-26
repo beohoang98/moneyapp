@@ -1,3 +1,7 @@
 - [MoneyApp Project Overview](project_moneyapp_overview.md) — tech stack, milestone structure, key architectural decisions (int amounts, polymorphic attachments, JWT stateless)
 - [MoneyApp Critical Issues from Ticket Review](project_critical_bugs_found.md) — routing conflict on /api/invoices/summary, overdue logic duplication, missing unit test ticket, missing dependency on E7-S5
 - [M0 Test Plan — Coverage & Gaps](project_m0_test_plan.md) — 48 cases across TS-01–TS-08; 6 open ambiguities blocking sign-off; automation backlog for Go tests + Playwright
+- [M0 Visual Verification — live run findings](project_m0_visual_verification.md) — 2026-04-26 live run results; TS-04-06 FAIL (sidebar not responsive at 375px); screenshots in docs/milestone-00/
+- [Backend local startup requires CGO_ENABLED=1](feedback_backend_startup.md) — go-sqlite3 stub error without CGO; always prefix with CGO_ENABLED=1
+- [M1 Verification Run — 2026-04-26](project_m1_verification.md) — 5 defects (D-01 to D-05); lint+build+tests green; 43 pass, ~40 blocked (browser)
+- [Browser MCP Findings — MoneyApp live run](project_browser_mcp_findings.md) — React input stale-ref limitation; 3 new browser-only defects (B-01 login no error, B-02/B-03 ISO date display)

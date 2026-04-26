@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ToastProvider } from './components/Toast'
+import { ProtectedRoute } from './components/ProtectedRoute'
 import { AppLayout } from './layouts/AppLayout'
 import { AuthLayout } from './layouts/AuthLayout'
 import { DashboardPage } from './pages/DashboardPage'
@@ -20,14 +21,16 @@ function App() {
             <Route path="/login" element={<LoginPage />} />
           </Route>
 
-          <Route element={<AppLayout />}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/expenses" element={<ExpensesPage />} />
-            <Route path="/income" element={<IncomePage />} />
-            <Route path="/invoices" element={<InvoicesPage />} />
-            <Route path="/categories" element={<CategoriesPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<AppLayout />}>
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/expenses" element={<ExpensesPage />} />
+              <Route path="/income" element={<IncomePage />} />
+              <Route path="/invoices" element={<InvoicesPage />} />
+              <Route path="/categories" element={<CategoriesPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
           </Route>
 
           <Route path="*" element={<NotFoundPage />} />

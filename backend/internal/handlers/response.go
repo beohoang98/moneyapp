@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 const maxBodySize = 1 << 20 // 1 MB
@@ -61,4 +62,29 @@ func respondList[T any](w http.ResponseWriter, status int, items []T, total, pag
 
 func respondSingle[T any](w http.ResponseWriter, status int, item T) {
 	respondJSON(w, status, SingleResponse[T]{Data: item})
+}
+
+// clampPagePerPage normalizes list pagination (matches service caps; use before calling List so response metadata is accurate).
+func clampPagePerPage(page, perPage int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 20
+	}
+	if perPage > 100 {
+		perPage = 100
+	}
+	return page, perPage
+}
+
+// validateOptionalISODate returns an error if value is non-empty and not YYYY-MM-DD.
+func validateOptionalISODate(paramName, value string) error {
+	if value == "" {
+		return nil
+	}
+	if _, err := time.Parse("2006-01-02", value); err != nil {
+		return fmt.Errorf("%s must be YYYY-MM-DD", paramName)
+	}
+	return nil
 }

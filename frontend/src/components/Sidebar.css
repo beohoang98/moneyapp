@@ -1,3 +1,10 @@
+/* Single flex child for AppLayout: avoids a 240px gap when aside is position:fixed on narrow viewports */
+.sidebar-root {
+  flex: 0 0 240px;
+  min-width: 240px;
+  position: relative;
+}
+
 .sidebar {
   width: 240px;
   min-height: 100vh;
@@ -53,6 +60,30 @@
   text-align: center;
 }
 
+.sidebar__footer {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar__logout {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sidebar__logout:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
 .sidebar-toggle {
   display: none;
   position: fixed;
@@ -73,6 +104,13 @@
 }
 
 @media (max-width: 767px) {
+  .sidebar-root {
+    flex: 0 0 0;
+    min-width: 0;
+    width: 0;
+    overflow: visible;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;

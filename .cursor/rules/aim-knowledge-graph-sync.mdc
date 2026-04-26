@@ -1,0 +1,38 @@
+---
+description: Sync session context with the Aim knowledge graph (MCP); read before work, write after durable facts
+alwaysApply: true
+---
+
+# Aim knowledge graph — always sync
+
+This workspace persists a **project-local knowledge graph** under **`.aim/`** (JSONL), wired in **`.cursor/mcp.json`** via **`mcp-knowledge-graph`** (`--memory-path` → `.aim`). Treat it as **durable team memory**, not a substitute for reading the repo.
+
+## When to read (use graph → inform answers)
+
+- **Before** non-trivial work (features, debugging, milestones): run **`aim_memory_search`** with keywords tied to the task (e.g. component names, ticket IDs, `MoneyApp`, `Milestone`, `Backend`), or **`aim_memory_get`** when you already know **exact entity names**.
+- If you are unsure which database file/context applies: **`aim_memory_list_stores`** once, then query the right scope.
+- If memory conflicts with **current files or `git`**, trust the **code** and treat the graph as **possibly stale**; still report the conflict to the user.
+
+## When to write (session → graph)
+
+Persist only **durable, non-obvious** facts worth recalling across chats: decisions, constraints, incident root causes, agreed conventions **not** already in `CLAUDE.md` / `docs/`.
+
+| Situation | Tool |
+|-----------|------|
+| New entity (person, project, component, ticket cluster, doc) | **`aim_memory_store`** |
+| Entity already exists; append facts | **`aim_memory_add_facts`** (never use on missing entities — **`aim_memory_store`** first) |
+| Connect two **existing** entities | **`aim_memory_link`** (`from`, `relationType`, `to`; active-voice verb) |
+| User asks to remove or correct memory | **`aim_memory_forget`**, **`aim_memory_remove_facts`**, or **`aim_memory_unlink`** as appropriate |
+
+Use optional **`location: "project"`** when you must force the **repo `.aim/`** tree (portable default for this monorepo). Use optional **`context`** only when splitting graphs (e.g. `work` vs `personal`); otherwise stay on the **default / master** store so facts stay discoverable.
+
+## Hygiene
+
+- **Observations**: short declarative sentences; avoid pasting large diffs or whole files.
+- **Entities**: stable `name` keys (no spaces if you want fewer lookup mistakes; underscores ok).
+- **Relations**: both endpoints must exist **before** `aim_memory_link`.
+- Do **not** duplicate what lives in git: no “current file contents” dumps; link to **paths** in observations instead.
+
+## MCP usage
+
+Use the workspace **Aim / Memory Bank** MCP tools (`aim_memory_*`). If a call fails, read the tool descriptor in the MCP tools folder for required fields, then retry. If MCP is disabled, skip writes and say so once.
