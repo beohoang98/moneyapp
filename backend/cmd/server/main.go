@@ -101,10 +101,9 @@ func main() {
 	mux.Handle("/api/auth/", publicMux)
 	mux.Handle("/api/", authMiddleware(protectedMux))
 
-	frontendOrigin := "http://localhost:5173"
 	handler := handlers.LoggingMiddleware(
 		handlers.RecoveryMiddleware(
-			handlers.CORSMiddleware(frontendOrigin)(mux),
+			handlers.CORSMiddleware(cfg.CORSAllowedOrigins)(mux),
 		),
 	)
 

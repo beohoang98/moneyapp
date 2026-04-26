@@ -24,6 +24,13 @@ cd frontend && npm run build    # Type-check + production build
 cd frontend && npm run lint     # ESLint
 ```
 
+### E2E (Playwright)
+Config and specs live under **`e2e/`** (not repo root). Starts backend + Vite via `e2e/playwright.config.ts` when ports are free.
+```bash
+cd e2e && npm install && npx playwright install chromium && npm test
+make test-e2e   # same as above from Makefile
+```
+
 ### Infrastructure
 ```bash
 docker compose up minio -d      # Start MinIO (needed only when STORAGE_TYPE=s3)

@@ -34,6 +34,13 @@ export function IncomePage() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    if (!detailTarget) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDetailTarget(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [detailTarget])
+
+  useEffect(() => {
     let cancelled = false
     getIncomes({ page, per_page: perPage, date_from: dateFrom || undefined, date_to: dateTo || undefined, category_id: categoryId })
       .then((result) => {

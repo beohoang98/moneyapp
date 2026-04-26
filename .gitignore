@@ -31,6 +31,9 @@ Thumbs.db
 # Local storage data
 data/
 
+# E2E screenshots (generated per run)
+docs/milestone-02/screenshots/
+
 # Environment
 .env
 .env.local

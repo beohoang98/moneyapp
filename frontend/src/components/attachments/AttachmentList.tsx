@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { getAttachments, deleteAttachment, getDownloadUrl, getPreviewUrl } from '../../api/attachments'
+import { TOKEN_KEY } from '../../api/client'
 import { ConfirmDialog } from '../ConfirmDialog'
+import { useToast } from '../../hooks/useToast'
 import type { Attachment } from '../../types/attachment'
 import './Attachments.css'
 
@@ -10,25 +12,92 @@ interface AttachmentListProps {
   refreshKey?: number
 }
 
+function revokeMap(map: Map<number, string>) {
+  map.forEach((url) => URL.revokeObjectURL(url))
+}
+
 export function AttachmentList({ entityType, entityId, refreshKey }: AttachmentListProps) {
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [previewBlobs, setPreviewBlobs] = useState<Map<number, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<Attachment | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  const blobsRef = useRef<Map<number, string>>(new Map())
+  // Revoke-on-unmount only: revoking while the PDF tab is still open blanks it.
+  const pdfBlobsRef = useRef<Set<string>>(new Set())
+  const { addToast } = useToast()
 
   useEffect(() => {
+    let cancelled = false
+    revokeMap(blobsRef.current)
+    blobsRef.current = new Map()
+    setPreviewBlobs(new Map())
     setLoading(true)
+
+    const token = localStorage.getItem(TOKEN_KEY)
+
     getAttachments(entityType, entityId)
-      .then(setAttachments)
-      .catch(() => {})
-      .finally(() => setLoading(false))
+      .then(async (list) => {
+        if (cancelled) return
+        setAttachments(list)
+        if (!token) {
+          return
+        }
+        const map = new Map<number, string>()
+        const images = list.filter((a) => a.mime_type.startsWith('image/'))
+        await Promise.all(
+          images.map(async (att) => {
+            try {
+              const r = await fetch(getPreviewUrl(att.id), {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              if (!r.ok || cancelled) return
+              const url = URL.createObjectURL(await r.blob())
+              map.set(att.id, url)
+            } catch {
+              /* skip broken preview */
+            }
+          }),
+        )
+        if (cancelled) {
+          revokeMap(map)
+          return
+        }
+        blobsRef.current = map
+        setPreviewBlobs(new Map(map))
+      })
+      .catch(() => {
+        if (!cancelled) setAttachments([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+      revokeMap(blobsRef.current)
+      blobsRef.current = new Map()
+      pdfBlobsRef.current.forEach((url) => URL.revokeObjectURL(url))
+      pdfBlobsRef.current.clear()
+    }
   }, [entityType, entityId, refreshKey])
 
   const handleDelete = async () => {
     if (!deleteTarget) return
-    await deleteAttachment(deleteTarget.id)
-    setAttachments((prev) => prev.filter((a) => a.id !== deleteTarget.id))
-    setDeleteTarget(null)
+    try {
+      await deleteAttachment(deleteTarget.id)
+      const blobUrl = blobsRef.current.get(deleteTarget.id)
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl)
+        blobsRef.current.delete(deleteTarget.id)
+        setPreviewBlobs(new Map(blobsRef.current))
+      }
+      setAttachments((prev) => prev.filter((a) => a.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch {
+      addToast('Failed to delete attachment', 'error')
+      setDeleteTarget(null)
+    }
   }
 
   const formatSize = (bytes: number) => {
@@ -38,7 +107,7 @@ export function AttachmentList({ entityType, entityId, refreshKey }: AttachmentL
   }
 
   const handleDownload = (att: Attachment) => {
-    const token = localStorage.getItem('moneyapp_token')
+    const token = localStorage.getItem(TOKEN_KEY)
     const url = getDownloadUrl(att.id)
 
     const a = document.createElement('a')
@@ -70,27 +139,39 @@ export function AttachmentList({ entityType, entityId, refreshKey }: AttachmentL
           <div key={att.id} className="attachment-item">
             <div className="attachment-item__preview">
               {att.mime_type.startsWith('image/') ? (
-                <img
-                  src={getPreviewUrl(att.id)}
-                  alt={att.filename}
-                  className="attachment-item__thumb"
-                  onClick={() => setLightboxSrc(getPreviewUrl(att.id))}
-                />
+                previewBlobs.has(att.id) ? (
+                  <img
+                    src={previewBlobs.get(att.id)}
+                    alt={att.filename}
+                    className="attachment-item__thumb"
+                    onClick={() => setLightboxSrc(previewBlobs.get(att.id) ?? null)}
+                  />
+                ) : (
+                  <div
+                    className="attachment-item__thumb-placeholder"
+                    title="Loading preview"
+                    aria-hidden
+                  />
+                )
               ) : (
-                <div className="attachment-item__icon" onClick={() => {
-                  const token = localStorage.getItem('moneyapp_token')
-                  const url = getPreviewUrl(att.id)
-                  if (token) {
-                    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-                      .then((r) => r.blob())
-                      .then((blob) => {
-                        const blobUrl = URL.createObjectURL(blob)
-                        window.open(blobUrl)
-                      })
-                  } else {
-                    window.open(url)
-                  }
-                }}>
+                <div
+                  className="attachment-item__icon"
+                  onClick={() => {
+                    const t = localStorage.getItem(TOKEN_KEY)
+                    const url = getPreviewUrl(att.id)
+                    if (t) {
+                      fetch(url, { headers: { Authorization: `Bearer ${t}` } })
+                        .then((r) => r.blob())
+                        .then((blob) => {
+                          const blobUrl = URL.createObjectURL(blob)
+                          pdfBlobsRef.current.add(blobUrl)
+                          window.open(blobUrl)
+                        })
+                    } else {
+                      window.open(url)
+                    }
+                  }}
+                >
                   PDF
                 </div>
               )}

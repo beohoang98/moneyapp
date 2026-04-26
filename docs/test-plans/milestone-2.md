@@ -105,7 +105,14 @@ MinIO console: `http://localhost:9001` (user: `minioadmin`, pass: `minioadmin`).
 
 #### Test file fixtures
 
-Prepare the following test files before running attachment tests:
+**Repository JPEG (invoice / receipt image):** use the committed fixture **`testing/files/test-invoice.jpeg`** (photograph of a Vietnamese retail receipt — realistic line items, VND-style separators, QR). From the repo root it is suitable for:
+
+- Manual or browser automation: attach as **invoice** image (**E4-S5**), **expense receipt** (**E2-S7**), or generic **E7-S1** / **E7-S4** JPEG flows.
+- `curl`: `-F "file=@testing/files/test-invoice.jpeg"` (run `curl` from repo root, or pass an absolute path).
+
+The file is valid `image/jpeg` and under the **10 MB** upload limit (~2.1 MB as of this plan). Prefer this over placeholder URLs when testing preview and real-world layout.
+
+Prepare the following **additional** test files before running attachment tests (or rely on the repo JPEG above where a JPEG is enough):
 
 ```bash
 # Small valid JPEG (~50KB)
@@ -416,7 +423,7 @@ The following scenarios may cause orphaned storage files and should be noted for
 |---|---|---|---|---|---|
 | TS-32-01 | Smoke | Upload invoice PDF — prominent FileUpload section shown in InvoiceForm | 1. Open invoice edit/detail view. 2. Observe the `FileUpload` component placement. | `FileUpload` is a prominent section in the form (not a footer footnote). Select `test_invoice.pdf`. Upload progress shown. On completion, PDF attachment appears in `AttachmentList` with PDF icon and filename. | AC1 |
 | TS-32-02 | Smoke | PDF preview visible inline in invoice attachment list | After upload, `AttachmentList` shows the PDF entry. | For the PDF attachment, an `<iframe>` or `<embed>` tag (or a link that opens the preview endpoint) is shown pointing to `/api/attachments/<id>/preview`. Clicking it opens the full PDF in the browser's built-in viewer. | FA-08, AC2 |
-| TS-32-03 | Regression | JPEG attachment — thumbnail shown instead of PDF icon | Upload a JPEG receipt to an invoice. | In `AttachmentList`, JPEG renders as a thumbnail (not a PDF icon). | FA-07 |
+| TS-32-03 | Regression | JPEG attachment — thumbnail shown instead of PDF icon | Upload a JPEG receipt to an invoice (use **`testing/files/test-invoice.jpeg`**). | In `AttachmentList`, JPEG renders as a thumbnail (not a PDF icon). | FA-07 |
 | TS-32-04 | Regression | `entity_type=invoice` in API request | Inspect the `POST /api/attachments` multipart body when uploading via the invoice form. | Form data includes `entity_type=invoice` and the correct `entity_id`. | FA-03 |
 
 ---
@@ -749,12 +756,12 @@ Candidates for Playwright or Go integration test automation in a future pass. No
 
 | Test name | Suite | Priority | Notes |
 |---|---|---|---|
-| `should upload JPEG receipt to expense and see it in AttachmentList` | TS-30 | High | Use `page.setInputFiles` on the hidden file input; assert attachment row appears |
+| `should upload JPEG receipt to expense and see it in AttachmentList` | TS-30 | High | From `e2e/`: `npm test`. Use `page.setInputFiles` with repo fixture `testing/files/test-invoice.jpeg` on the hidden file input; assert attachment row appears |
 | `should show attachment count indicator on expense list row` | TS-30 | High | After upload, navigate back to `/expenses`; assert paperclip icon visible on that row |
 | `should reject oversized file client-side before upload` | TS-26 | High | `page.setInputFiles` with 11MB buffer; assert error text; assert no network request |
 | `should reject non-PDF/JPEG/PNG file client-side` | TS-25 | Medium | `page.setInputFiles` with `.exe` file; assert type error message |
 | `should download attachment and verify filename in header` | TS-27 | Medium | Intercept `GET /api/attachments/:id/download`; assert `Content-Disposition` header |
-| `should show JPEG thumbnail and open lightbox on click` | TS-28 | Medium | Upload JPEG; assert `<img>` with `src` containing `preview`; click; assert modal |
+| `should show JPEG thumbnail and open lightbox on click` | TS-28 | Medium | Upload JPEG (`testing/files/test-invoice.jpeg`); assert `<img>` with `src` containing `preview`; click; assert modal |
 | `should show PDF icon (not broken img) for PDF attachment` | TS-28 | Medium | Upload PDF; assert PDF icon element; assert no broken `<img>` |
 
 ### Playwright — Category management (TS-34, TS-35, TS-36)

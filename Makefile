@@ -1,4 +1,4 @@
-.PHONY: dev-backend dev-frontend dev minio
+.PHONY: dev-backend dev-frontend dev minio test-e2e
 
 # Run backend
 dev-backend:
@@ -15,3 +15,7 @@ minio:
 # Run all services (requires multiple terminals or use tmux)
 dev: minio
 	@echo "Run 'make dev-backend' and 'make dev-frontend' in separate terminals"
+
+# Playwright e2e (Chromium); installs deps on first run
+test-e2e:
+	cd e2e && npm install && npx playwright install chromium && npm test

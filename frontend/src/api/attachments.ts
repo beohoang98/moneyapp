@@ -1,8 +1,7 @@
-import { apiClient } from './client'
+import { apiClient, TOKEN_KEY } from './client'
 import type { Attachment } from '../types/attachment'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
-const TOKEN_KEY = 'moneyapp_token'
 
 interface AttachmentListResponse {
   data: Attachment[]

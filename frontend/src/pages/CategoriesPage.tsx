@@ -74,7 +74,7 @@ export function CategoriesPage() {
       <div className="page-header">
         <h2 style={{ margin: 0 }}>{title}</h2>
         <button className="btn btn-primary btn-sm" onClick={() => { setShowForm(type); setNewName(''); setFormError('') }}>
-          + Add Category
+          + Add {type === 'expense' ? 'expense' : 'income'} category
         </button>
       </div>
 

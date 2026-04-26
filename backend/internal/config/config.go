@@ -13,6 +13,8 @@ type Config struct {
 	DBPath          string
 	JWTSecret       string
 
+	CORSAllowedOrigins []string
+
 	// Storage backend selection: "local" or "s3"
 	StorageType      string
 	LocalStoragePath string
@@ -30,10 +32,11 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:             getEnv("PORT", "8080"),
-		DBPath:           getEnv("DB_PATH", "./moneyapp.db"),
-		JWTSecret:        getEnv("JWT_SECRET", ""),
-		StorageType:      strings.ToLower(getEnv("STORAGE_TYPE", "local")),
+		Port:               getEnv("PORT", "8080"),
+		DBPath:             getEnv("DB_PATH", "./moneyapp.db"),
+		JWTSecret:          getEnv("JWT_SECRET", ""),
+		CORSAllowedOrigins: parseCORSOrigins(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
+		StorageType:        strings.ToLower(getEnv("STORAGE_TYPE", "local")),
 		LocalStoragePath: getEnv("LOCAL_STORAGE_PATH", "./data/storage"),
 		MinIOEndpoint:    getEnv("MINIO_ENDPOINT", "localhost:9000"),
 		MinIOAccessKey:   getEnv("MINIO_ACCESS_KEY", "minioadmin"),
@@ -64,6 +67,17 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseCORSOrigins(raw string) []string {
+	var origins []string
+	for _, o := range strings.Split(raw, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			origins = append(origins, o)
+		}
+	}
+	return origins
 }
 
 func getEnv(key, fallback string) string {

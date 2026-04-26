@@ -42,6 +42,13 @@ export function InvoicesPage() {
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    if (!detailTarget) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDetailTarget(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [detailTarget])
+
+  useEffect(() => {
     let cancelled = false
     Promise.all([
       getInvoices({
