@@ -1,0 +1,1 @@
+- [MoneyApp Project Overview](project_moneyapp_overview.md) — tech stack, MVP scope, deferred features, and key architectural decisions

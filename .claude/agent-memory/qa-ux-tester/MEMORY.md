@@ -1,0 +1,2 @@
+- [MoneyApp Project Overview](project_moneyapp_overview.md) — tech stack, milestone structure, key architectural decisions (int amounts, polymorphic attachments, JWT stateless)
+- [MoneyApp Critical Issues from Ticket Review](project_critical_bugs_found.md) — routing conflict on /api/invoices/summary, overdue logic duplication, missing unit test ticket, missing dependency on E7-S5

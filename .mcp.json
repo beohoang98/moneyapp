@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "Aim-Memory-Bank": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-knowledge-graph",
+        "--memory-path",
+        "/Users/beohoang98/.aim"
+      ],
+      "env": {}
+    }
+  }
+}
