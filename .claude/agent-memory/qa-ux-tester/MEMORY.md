@@ -5,3 +5,4 @@
 - [Backend local startup requires CGO_ENABLED=1](feedback_backend_startup.md) — go-sqlite3 stub error without CGO; always prefix with CGO_ENABLED=1
 - [M1 Verification Run — 2026-04-26](project_m1_verification.md) — 5 defects (D-01 to D-05); lint+build+tests green; 43 pass, ~40 blocked (browser)
 - [Browser MCP Findings — MoneyApp live run](project_browser_mcp_findings.md) — React input stale-ref limitation; 3 new browser-only defects (B-01 login no error, B-02/B-03 ISO date display)
+- [M2 Test Plan — Coverage & Structure](project_m2_test_plan.md) — 85 cases TS-25–TS-40; file attachments (local+MinIO), custom categories, enhanced lists; M1 defects D-01/D-03/D-04 must be fixed first
