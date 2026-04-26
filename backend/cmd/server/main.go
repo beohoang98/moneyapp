@@ -3,32 +3,53 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
+	"github.com/beohoang98/moneyapp/internal/config"
 	"github.com/beohoang98/moneyapp/internal/database"
+	"github.com/beohoang98/moneyapp/internal/handlers"
+	"github.com/beohoang98/moneyapp/internal/storage"
+	"github.com/beohoang98/moneyapp/migrations"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("failed to load config: %v", err)
 	}
 
-	db, err := database.Open("moneyapp.db")
+	db, err := database.Open(cfg.DBPath, migrations.FS)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer db.Close()
 
+	var store *storage.MinIOStorage
+	store, err = storage.NewMinIOStorage(
+		cfg.MinIOEndpoint,
+		cfg.MinIOAccessKey,
+		cfg.MinIOSecretKey,
+		cfg.MinIOBucket,
+		cfg.MinIOUseSSL,
+	)
+	if err != nil {
+		log.Printf("WARNING: MinIO not available: %v", err)
+		store = nil
+	}
+
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
-	})
+	healthHandler := handlers.NewHealthHandler(db, store)
+	healthHandler.RegisterRoutes(mux)
 
-	log.Printf("Server starting on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	frontendOrigin := "http://localhost:5173"
+	handler := handlers.LoggingMiddleware(
+		handlers.RecoveryMiddleware(
+			handlers.CORSMiddleware(frontendOrigin)(mux),
+		),
+	)
+
+	log.Printf("Server starting on :%s", cfg.Port)
+	if err := http.ListenAndServe(":"+cfg.Port, handler); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

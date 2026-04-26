@@ -1,2 +1,3 @@
 - [MoneyApp Project Overview](project_moneyapp_overview.md) — tech stack, milestone structure, key architectural decisions (int amounts, polymorphic attachments, JWT stateless)
 - [MoneyApp Critical Issues from Ticket Review](project_critical_bugs_found.md) — routing conflict on /api/invoices/summary, overdue logic duplication, missing unit test ticket, missing dependency on E7-S5
+- [M0 Test Plan — Coverage & Gaps](project_m0_test_plan.md) — 48 cases across TS-01–TS-08; 6 open ambiguities blocking sign-off; automation backlog for Go tests + Playwright

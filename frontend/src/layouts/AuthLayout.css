@@ -1,0 +1,26 @@
+.auth-layout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.auth-layout__card {
+  width: 100%;
+  max-width: 400px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+}
+
+.auth-layout__brand {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: center;
+  margin: 0 0 24px;
+  letter-spacing: -0.5px;
+}

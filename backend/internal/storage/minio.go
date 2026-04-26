@@ -51,3 +51,8 @@ func (s *MinIOStorage) Download(ctx context.Context, objectName string) (io.Read
 func (s *MinIOStorage) Delete(ctx context.Context, objectName string) error {
 	return s.client.RemoveObject(ctx, s.bucketName, objectName, minio.RemoveObjectOptions{})
 }
+
+func (s *MinIOStorage) HealthCheck(ctx context.Context) error {
+	_, err := s.client.BucketExists(ctx, s.bucketName)
+	return err
+}
