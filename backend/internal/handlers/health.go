@@ -10,12 +10,13 @@ import (
 )
 
 type HealthHandler struct {
-	db      *sql.DB
-	storage *storage.MinIOStorage
+	db          *sql.DB
+	storage     storage.ObjectStore
+	storageType string // "local" | "s3" — for health JSON only
 }
 
-func NewHealthHandler(db *sql.DB, s *storage.MinIOStorage) *HealthHandler {
-	return &HealthHandler{db: db, storage: s}
+func NewHealthHandler(db *sql.DB, s storage.ObjectStore, storageType string) *HealthHandler {
+	return &HealthHandler{db: db, storage: s, storageType: storageType}
 }
 
 func (h *HealthHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -51,8 +52,9 @@ func (h *HealthHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, statusCode, map[string]string{
-		"status":   overallStatus,
-		"database": dbStatus,
-		"storage":  storageStatus,
+		"status":        overallStatus,
+		"database":      dbStatus,
+		"storage":       storageStatus,
+		"storage_type":  h.storageType,
 	})
 }

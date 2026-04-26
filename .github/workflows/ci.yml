@@ -28,6 +28,63 @@ jobs:
       - name: Test
         run: go test ./...
 
+  backend-s3-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+          for i in $(seq 1 45); do
+            if curl -sf http://localhost:9000/minio/health/live; then
+              echo "MinIO ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO failed to become healthy"
+          docker logs minio
+          exit 1
+
+      - name: Build server and verify S3 health
+        working-directory: backend
+        env:
+          STORAGE_TYPE: s3
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          MINIO_BUCKET: moneyapp-ci
+          MINIO_USE_SSL: "false"
+          JWT_SECRET: ci-test-secret-not-for-production
+          DB_PATH: ${{ runner.temp }}/moneyapp-ci.db
+          PORT: "18080"
+        run: |
+          go build -o "${RUNNER_TEMP}/moneyapp-server" ./cmd/server
+          "${RUNNER_TEMP}/moneyapp-server" &
+          srv_pid=$!
+          for i in $(seq 1 45); do
+            if out=$(curl -sf "http://127.0.0.1:18080/api/health"); then
+              echo "$out" | grep -q '"storage":"ok"'
+              echo "$out" | grep -q '"storage_type":"s3"'
+              echo "$out" | grep -q '"status":"ok"'
+              kill $srv_pid
+              wait $srv_pid 2>/dev/null || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server did not become healthy"
+          kill $srv_pid 2>/dev/null || true
+          exit 1
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

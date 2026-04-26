@@ -1,8 +1,11 @@
 # MoneyApp — Product Requirements Document
 
-**Version**: 1.1
+**Version**: 1.2
 **Date**: 2026-04-26
 **Status**: Draft
+
+**Changelog**:
+- v1.2 (2026-04-26): Generalized file storage from MinIO-only to configurable storage backend (`STORAGE_TYPE=local|s3`). Updated functional requirements, NF rows, data model, dependencies, and DoD accordingly.
 
 ---
 
@@ -48,7 +51,7 @@ The application is built for a solo developer or small team. Requirements are sc
 - Category management for transactions
 - A financial dashboard with summaries and basic filtering
 - REST API backend in Go with a React TypeScript frontend
-- SQLite as the primary database; MinIO for file storage
+- SQLite as the primary database; configurable object storage (local filesystem or S3-compatible) for file attachments
 
 ### Out of Scope (deferred)
 
@@ -64,10 +67,11 @@ The application is built for a solo developer or small team. Requirements are sc
 
 - A1: The app is self-hosted by the user; a single login credential is sufficient for MVP.
 - A2: SQLite is adequate for the expected data volume (single user, several years of records).
-- A3: MinIO is available locally via Docker Compose; object keys do not need to be publicly accessible.
+- A3: File storage is configurable via `STORAGE_TYPE`. For local development without Docker, `STORAGE_TYPE=local` writes files to a local directory. For Docker Compose or production, `STORAGE_TYPE=s3` uses a MinIO (or any S3-compatible) endpoint. In both modes, storage keys (paths/object keys) are not publicly accessible.
 - A4: The user accesses the app from a desktop browser; mobile responsiveness is a should-have.
 - A5: Monetary amounts are stored and displayed in a single configured currency (e.g., VND or USD).
 - A6: "Invoice" and "bill" are used interchangeably — both refer to a payable document from a vendor.
+- A7: `STORAGE_TYPE` defaults to `local` for bare-metal `go run` workflows; `s3` is the recommended value when using the Docker Compose stack.
 
 ---
 
@@ -123,7 +127,7 @@ Priority notation follows MoSCoW:
 - Given a missing date, when the user tries to save, then the date defaults to today.
 
 **Acceptance Criteria — EX-04:**
-- Given an existing expense, when the user confirms deletion, then the record and any associated file attachments are removed from both the database and MinIO.
+- Given an existing expense, when the user confirms deletion, then the record and any associated file attachments are removed from both the database and the storage backend.
 - Given a delete action, when the user is shown a confirmation dialog and cancels, then no data is modified.
 
 ---
@@ -224,9 +228,9 @@ Priority notation follows MoSCoW:
 |-------|----------|------------------------------------------------------------------------------------------|
 | FA-01 | [M]      | The system must accept file uploads in PDF, JPEG, and PNG formats.                      |
 | FA-02 | [M]      | The system must enforce a maximum file size of 10 MB per file.                          |
-| FA-03 | [M]      | Uploaded files must be stored in MinIO and referenced by a key in the database.         |
+| FA-03 | [M]      | Uploaded files must be stored in the configured storage backend and referenced by an opaque storage key in the database.         |
 | FA-04 | [M]      | The user must be able to download any attached file.                                     |
-| FA-05 | [M]      | Deleting a parent record (expense, income, invoice) must also delete its attached files from MinIO. |
+| FA-05 | [M]      | Deleting a parent record (expense, income, invoice) must also delete its attached files from the storage backend. |
 | FA-06 | [S]      | The user should be able to attach multiple files to a single record.                    |
 | FA-07 | [S]      | The system should display an inline preview for image attachments (thumbnail).          |
 | FA-08 | [S]      | The system should display an inline PDF preview using the browser's built-in PDF viewer.|
@@ -236,7 +240,7 @@ Priority notation follows MoSCoW:
 - Given a file larger than 10 MB, when the user attempts to upload, then the system rejects it client-side before any network request is made, with a clear size-limit error message.
 
 **Acceptance Criteria — FA-05:**
-- Given a record with two attached files, when the user deletes the record, then both objects are removed from MinIO storage (verified by the absence of those keys in the bucket).
+- Given a record with two attached files, when the user deletes the record, then both objects are removed from the storage backend (verified by the absence of those storage keys).
 
 ---
 
@@ -274,7 +278,7 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 - Given a partially extracted result (e.g., amount found but date missing), when the form is displayed, then blank fields are clearly indicated and the user can fill them in manually.
 
 **Acceptance Criteria — SC-06:**
-- Given a completed scan and filled review form, when the user does NOT click save, then no record is written to the database and no attachment is stored in MinIO.
+- Given a completed scan and filled review form, when the user does NOT click save, then no record is written to the database and no attachment is stored in the storage backend.
 
 ---
 
@@ -294,10 +298,30 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 | ID     | Requirement                                                                                   |
 |--------|-----------------------------------------------------------------------------------------------|
 | NF-05  | All API communication must occur over HTTPS in production.                                    |
-| NF-06  | JWT secrets and MinIO credentials must be loaded from environment variables, never hardcoded. |
-| NF-07  | File download URLs must be pre-signed or access-controlled — raw MinIO bucket objects must not be publicly accessible. |
+| NF-06  | JWT secrets and storage credentials (MinIO keys or local path) must be loaded from environment variables (`JWT_SECRET`, `STORAGE_TYPE`, `LOCAL_STORAGE_PATH`, `MINIO_*`), never hardcoded. |
+| NF-07  | File downloads must be access-controlled — served through an authenticated API proxy; raw storage objects (MinIO bucket objects or local files) must not be publicly accessible. |
 | NF-08  | User passwords must be hashed using bcrypt (cost factor >= 12) before storage.                |
 | NF-09  | The API must return appropriate HTTP error codes and must not leak internal error details to the client. |
+
+### 4.2.1 Storage Configuration
+
+The backend supports two storage backends, selected by the `STORAGE_TYPE` environment variable:
+
+| Variable | Values | Notes |
+|---|---|---|
+| `STORAGE_TYPE` | `local` \| `s3` | Default: `local`. Case-insensitive. |
+| `LOCAL_STORAGE_PATH` | Any writable path | Used when `STORAGE_TYPE=local`. Created on startup if missing. Default in app and `.env.example`: `./data/storage`. |
+| `MINIO_ENDPOINT` | hostname:port | Used when `STORAGE_TYPE=s3`. |
+| `MINIO_ACCESS_KEY` | string | Used when `STORAGE_TYPE=s3`. |
+| `MINIO_SECRET_KEY` | string | Used when `STORAGE_TYPE=s3`. |
+| `MINIO_BUCKET` | string | Used when `STORAGE_TYPE=s3`. |
+| `MINIO_USE_SSL` | `true` \| `false` | Used when `STORAGE_TYPE=s3`. |
+
+**Health check behavior**:
+- `STORAGE_TYPE=local` — storage is healthy when `LOCAL_STORAGE_PATH` is writable.
+- `STORAGE_TYPE=s3` — storage is healthy when the configured bucket is reachable (existing behavior).
+
+The Docker Compose stack sets `STORAGE_TYPE=s3` so it continues to use MinIO. Bare-metal `go run` workflows default to `local` and require no external services.
 
 ### 4.3 Reliability & Data Integrity
 
@@ -305,7 +329,7 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 |--------|-----------------------------------------------------------------------------------------------|
 | NF-10  | All monetary amounts must be stored as integers (minor currency units, e.g., cents) to avoid floating-point errors. |
 | NF-11  | Database writes must use transactions where multiple tables are affected (e.g., record + attachments). |
-| NF-12  | The application must handle MinIO unavailability gracefully — file operations must fail with a user-friendly error without corrupting database state. |
+| NF-12  | The application must handle storage backend unavailability gracefully — file operations must fail with a user-friendly error without corrupting database state. (For `STORAGE_TYPE=local`, this means the base path must be writable; for `STORAGE_TYPE=s3`, the bucket must be reachable.) |
 | NF-13  | The SQLite database file must be backed up by copying the file; the app should expose a `GET /api/backup` endpoint (authenticated) that streams the DB file. |
 
 ### 4.4 Usability
@@ -335,7 +359,7 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 | NF-18  | The backend must expose a `GET /api/health` endpoint returning service and database status.   |
 | NF-19  | Database schema changes must be applied via versioned migration files (not ad-hoc ALTER TABLE). |
 | NF-20  | Backend code must have unit test coverage for service-layer business logic.                   |
-| NF-21  | Environment configuration (port, DB path, MinIO endpoint/credentials, JWT secret) must be documented in a `.env.example` file. |
+| NF-21  | Environment configuration (port, DB path, JWT secret, `STORAGE_TYPE`, `LOCAL_STORAGE_PATH`, MinIO endpoint/credentials) must be documented in a `.env.example` file. |
 
 ---
 
@@ -361,17 +385,17 @@ This is a conceptual overview — exact schema is defined in migration files.
 - id, vendor_name, amount (integer, minor units), issue_date, due_date, status (unpaid | paid | overdue), description, created_at, updated_at
 
 **attachments**
-- id, entity_type (expense | income | invoice), entity_id, filename, mime_type, size_bytes, storage_key (MinIO object key), created_at
+- id, entity_type (expense | income | invoice), entity_id, filename, mime_type, size_bytes, storage_key (opaque key: a relative file path under `LOCAL_STORAGE_PATH` when `STORAGE_TYPE=local`, or an S3 object key when `STORAGE_TYPE=s3`), created_at
 
 **scan_results** *(could-have — SC-13; only needed if scan audit/history is implemented)*
-- id, source_image_key (MinIO object key of the uploaded image), raw_response (JSON text returned by the vision API), extracted_amount (integer, minor units, nullable), extracted_currency (nullable), extracted_vendor (nullable), extracted_date (nullable), extracted_line_items (JSON array, nullable), status (success | partial | failed), created_at
+- id, source_image_key (opaque storage key of the uploaded image — same convention as `attachments.storage_key`), raw_response (JSON text returned by the vision API), extracted_amount (integer, minor units, nullable), extracted_currency (nullable), extracted_vendor (nullable), extracted_date (nullable), extracted_line_items (JSON array, nullable), status (success | partial | failed), created_at
 - Note: if SC-13 is deferred, the backend can process scans statelessly without writing to this table; the table only becomes necessary for audit or re-processing use cases.
 
 ### Key Relationships
 
 - Each expense/income belongs to one category.
 - Each attachment belongs to one entity (polymorphic via entity_type + entity_id).
-- Deleting an expense/income/invoice cascades to its attachments (in both DB and MinIO).
+- Deleting an expense/income/invoice cascades to its attachments (in both DB and the storage backend).
 - A scan_results row is optionally linked to the attachment created from the source image (foreign key to attachments.id, nullable — the image may be discarded if the user does not save the record).
 
 ---
@@ -473,7 +497,7 @@ This is a conceptual overview — exact schema is defined in migration files.
 
 | Story ID | User Story                                                                                                 | Size | Dependencies |
 |----------|------------------------------------------------------------------------------------------------------------|------|--------------|
-| E7-S1    | As the user, I want to upload PDF, JPEG, or PNG files to a record so that I can keep supporting documents alongside transactions. | L    | MinIO setup  |
+| E7-S1    | As the user, I want to upload PDF, JPEG, or PNG files to a record so that I can keep supporting documents alongside transactions. | L    | Storage backend setup (M0-02) |
 | E7-S2    | As the user, I want the app to reject files over 10 MB so that I am warned before wasting bandwidth.       | XS   | E7-S1        |
 | E7-S3    | As the user, I want to download any attached file so that I can retrieve the original document.            | S    | E7-S1        |
 | E7-S4    | As the user, I want to see a thumbnail preview of image attachments so that I can confirm I uploaded the right file. | S    | E7-S1        |
@@ -519,7 +543,7 @@ Estimates assume a solo developer working part-time (~10–15 hours/week). Adjus
 - [ ] `GET /api/health` endpoint
 - [ ] CI pipeline: lint + build checks (GitHub Actions or equivalent)
 
-**Exit criteria**: `go run ./cmd/server` and `npm run dev` start without errors; MinIO is reachable; health endpoint returns 200.
+**Exit criteria**: `go run ./cmd/server` and `npm run dev` start without errors; storage backend is reachable (local path writable when `STORAGE_TYPE=local`, MinIO bucket reachable when `STORAGE_TYPE=s3`); health endpoint returns 200.
 
 ---
 
@@ -574,17 +598,17 @@ Remaining could-have items: category colors/icons, due date notifications, passw
 
 | ID  | Item                             | Type        | Impact | Mitigation                                                                 |
 |-----|----------------------------------|-------------|--------|----------------------------------------------------------------------------|
-| D1  | MinIO availability during dev    | External    | High   | Docker Compose setup must be documented and easy to start; health check should detect MinIO status. |
+| D1  | Storage backend availability during dev | External | High | When `STORAGE_TYPE=s3`, Docker Compose setup must be documented and easy to start. When `STORAGE_TYPE=local`, the base path must be writable. Health check must detect the active backend's status. |
 | D2  | SQLite concurrency limitations   | Technical   | Low    | Single-user app; concurrent writes are not a concern. Use WAL mode for slightly better performance. |
 | D3  | File storage orphan accumulation | Data        | Medium | Implement cleanup in delete handlers and add an optional audit/cleanup admin endpoint. |
 | D4  | JWT secret rotation              | Security    | Medium | Document rotation process; existing tokens become invalid on rotation (acceptable for personal app). |
 | D5  | Chart library choice (frontend)  | Technical   | Low    | Evaluate Recharts or Chart.js early to avoid late-stage refactoring. Decide before Milestone 3. |
 | D6  | Amount precision (floating point)| Data        | High   | Enforce integer storage (minor units) at the model level from day one. |
-| D7  | Missing MinIO cleanup on failure | Reliability | Medium | Use database transactions; only write MinIO key to DB after successful upload. Roll back DB if MinIO write fails. |
+| D7  | Missing storage cleanup on failure | Reliability | Medium | Use database transactions; only write storage key to DB after successful upload. Roll back DB if the storage write fails (applies to both local and S3 backends). |
 | D8  | Vision API availability / cost   | External    | Medium | Design the scan endpoint so it degrades gracefully (returns a clear error) if the API is unreachable. Monitor token usage; a personal app should stay well within free-tier or low-cost limits given infrequent scans. |
 | D9  | Vision API result quality        | Technical   | Medium | Prompt must request structured JSON output with explicit field names. Implement response validation; if required fields are missing, treat as a partial result rather than a hard failure. |
 | D10 | Image data privacy               | Security    | Medium | Image bytes are sent to a third-party API. Document this in a user-facing note. Prefer API tiers that do not use data for model training (see NF-23). Never log image contents server-side. |
-| D11 | Scan depends on file attachment Epic | Technical | High  | Epic 8 cannot start until Epic 7 (file attachments, MinIO upload) is functional. Plan M3 accordingly. |
+| D11 | Scan depends on file attachment Epic | Technical | High  | Epic 8 cannot start until Epic 7 (file attachments, storage backend upload) is functional. Plan M3 accordingly. |
 
 ---
 
@@ -600,7 +624,7 @@ Remaining could-have items: category colors/icons, due date notifications, passw
 | OQ6 | What is the intended deployment environment — local-only, or self-hosted behind a reverse proxy (e.g., Nginx, Traefik)? | Developer | High     |
 | OQ7 | Which vision API should be used for OCR/scanning? Options: (a) Claude Vision (Anthropic API — strong structured output, familiar SDK), (b) GPT-4o Vision (OpenAI), (c) Google Cloud Vision (traditional OCR, less flexible on complex layouts), (d) a self-hosted model (Ollama + LLaVA — no cost/privacy concern, but lower accuracy). Recommended default: Claude Vision for structured JSON extraction. | Developer | High     |
 | OQ8 | Should scan results be persisted to a `scan_results` table (SC-13) for audit, or processed statelessly with no DB write? Stateless is simpler for MVP; persisting enables re-processing and history. | Developer | Medium   |
-| OQ9 | What should happen to the uploaded image after a scan if the user does NOT save the resulting record? Options: (a) delete immediately from MinIO, (b) keep temporarily for 24 hours then purge, (c) always discard (process in memory without writing to MinIO). Option (c) simplifies cleanup but prevents attaching the image to the record. | Developer | Medium   |
+| OQ9 | What should happen to the uploaded image after a scan if the user does NOT save the resulting record? Options: (a) delete immediately from storage backend, (b) keep temporarily for 24 hours then purge, (c) always discard (process in memory without writing to storage). Option (c) simplifies cleanup but prevents attaching the image to the record. | Developer | Medium   |
 | OQ10 | Is the 15-second scan timeout (SC-11, NF-24) acceptable UX, or should a loading state with progress indication be prioritized? Vision API latency is typically 3–8 seconds for a receipt image; 15 s is a hard ceiling, not an expected average. | Developer | Low      |
 
 ---
@@ -616,7 +640,7 @@ A story is considered **Done** when all of the following are true:
 - [ ] No regression in previously working features (manual smoke test at minimum).
 - [ ] Code is committed, with no linting errors.
 - [ ] Any new environment variables are added to `.env.example` with a comment.
-- [ ] If file storage is involved: MinIO interaction is tested with a real MinIO instance (not mocked).
+- [ ] If file storage is involved: storage interaction is tested against the real configured backend — a real MinIO instance when `STORAGE_TYPE=s3`, or a real writable directory when `STORAGE_TYPE=local` (not mocked in either case).
 - [ ] If vision API is involved: the scan endpoint is tested with both a valid receipt image (happy path) and an unreadable image (error path); no record is written if the user does not submit the review form.
 
 A milestone is considered **Done** when:

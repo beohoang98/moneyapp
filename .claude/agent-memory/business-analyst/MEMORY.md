@@ -1,1 +1,2 @@
 - [MoneyApp Project Overview](project_moneyapp_overview.md) — tech stack, MVP scope, deferred features, and key architectural decisions
+- [Configurable Storage Backend Decision](project_storage_backend.md) — STORAGE_TYPE=local|s3 pattern; impacts health endpoint, E7-S1 interface, CLAUDE.md (2026-04-26)

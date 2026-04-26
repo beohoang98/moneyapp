@@ -1,7 +1,8 @@
 # Test Plan — Milestone 0: Project Foundation
 
 **Milestone goal**: Runnable skeleton with infrastructure in place. No user-facing features yet.  
-**Exit criteria (from tickets.md)**: `go run ./cmd/server` and `npm run dev` start without errors; MinIO is reachable; health endpoint returns 200; migrations run on startup; frontend renders a shell with routing.  
+**Exit criteria (from tickets.md)**: `go run ./cmd/server` and `npm run dev` start without errors; health endpoint returns 200; migrations run on startup; frontend renders a shell with routing.  
+**Storage note**: Exit criteria are met in either storage mode. With `STORAGE_TYPE=local` (the default in `.env.example`), the server starts and `/api/health` returns `{"storage":"ok","storage_type":"local",...}` using local disk — **MinIO is not required**. With `STORAGE_TYPE=s3`, MinIO (or another S3-compatible service) **must be reachable at startup** (fail-fast via `log.Fatalf` if not); once running it returns `"storage_type":"s3"` in the health JSON.  
 **NF references covered**: NF-09, NF-16, NF-18, NF-19, NF-21  
 **Date**: 2026-04-26  
 **Status**: Draft
@@ -32,20 +33,49 @@
 | Environment | Description | Notes |
 |---|---|---|
 | **local-fresh** | Fresh checkout, no `.env`, no DB file | Verifies defaults and first-run behavior |
-| **local-configured** | `.env` copied from `.env.example`, MinIO running | Standard dev environment |
-| **local-minio-down** | MinIO stopped (`docker compose stop minio`) | Tests degraded/partial health |
+| **local-no-minio** | `.env` with `STORAGE_TYPE=local`, `LOCAL_STORAGE_PATH` set (or default `./data/storage`); **no MinIO container** | Minimal smoke-test path; no Docker required |
+| **local-configured** | `.env` copied from `.env.example` (`STORAGE_TYPE=local`); no MinIO needed for local-fs tests | Standard dev environment for non-S3 work |
+| **local-with-s3** | `.env` with `STORAGE_TYPE=s3` and MinIO running (`docker compose up minio -d`) | Required for S3 storage path tests |
+| **local-minio-down** | `STORAGE_TYPE=s3`; MinIO stopped (`docker compose stop minio`) | Tests degraded health for S3 backend only |
 | **local-db-corrupt** | DB file replaced with invalid content | Tests migration error handling |
 | **local-partial-migrations** | DB with only `001_` applied, `002_` pending | Tests incremental migration |
-| **docker-compose** | Full stack via `docker compose up` | Tests M0-07 |
+| **docker-compose** | Full stack via `docker compose up` (includes MinIO, `STORAGE_TYPE=s3`) | Tests M0-07 |
 
 ### Prerequisites
 
+#### Option A — Minimal backend-only (no MinIO, `STORAGE_TYPE=local`)
+
 ```bash
-# Start MinIO only (for local-configured)
+# Copy env and ensure local storage mode (this is the default in .env.example)
+cp .env.example .env
+# Confirm / set:
+#   STORAGE_TYPE=local
+#   LOCAL_STORAGE_PATH=./data/storage
+# No Docker or MinIO needed.
+
+# Start backend
+cd backend && go run ./cmd/server
+
+# Start frontend (optional for backend-only smoke tests)
+cd frontend && npm run dev
+```
+
+#### Option B — With S3/MinIO (`STORAGE_TYPE=s3`)
+
+```bash
+# Start MinIO only
 docker compose up minio -d
 
 # Verify MinIO is up
 curl http://localhost:9000/minio/health/live
+
+# Set S3 vars in .env:
+#   STORAGE_TYPE=s3
+#   MINIO_ENDPOINT=localhost:9000
+#   MINIO_ACCESS_KEY=minioadmin
+#   MINIO_SECRET_KEY=minioadmin
+#   MINIO_BUCKET=moneyapp
+#   MINIO_USE_SSL=false
 
 # Start backend
 cd backend && go run ./cmd/server
@@ -57,17 +87,24 @@ cd frontend && npm run dev
 ### Environment variables under test (M0-02)
 
 ```
+# Core
 PORT=8080
 DB_PATH=./moneyapp.db
 JWT_SECRET=change-me
+BCRYPT_COST=12
+TOKEN_EXPIRY_HOURS=24
+CURRENCY=VND
+
+# Storage — local filesystem (default; no MinIO required)
+STORAGE_TYPE=local
+LOCAL_STORAGE_PATH=./data/storage
+
+# Storage — S3/MinIO (only set these when STORAGE_TYPE=s3)
 MINIO_ENDPOINT=localhost:9000
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin
 MINIO_BUCKET=moneyapp
 MINIO_USE_SSL=false
-BCRYPT_COST=12
-TOKEN_EXPIRY_HOURS=24
-CURRENCY=VND
 ```
 
 ---
@@ -129,7 +166,7 @@ CURRENCY=VND
 | TS-02-02 | Custom `DB_PATH` — DB created at custom location | local-configured | 1. Set `DB_PATH=/tmp/custom_moneyapp.db` in `.env`. 2. Start server. 3. Check for file at `/tmp/custom_moneyapp.db`. | SQLite file is created at the custom path; default path file not created. | AC3 |
 | TS-02-03 | Custom `PORT` — server listens on custom port | local-configured | 1. Set `PORT=9090` in `.env`. 2. Start server. 3. `curl http://localhost:9090/api/health`. | 200 response from port 9090; port 8080 not listening. | AC1 |
 | TS-02-04 | **Negative**: `JWT_SECRET` unset — warning or error | local-fresh | 1. Start server without setting `JWT_SECRET` (remove from `.env`). 2. Observe startup logs. | Server either exits with an error referencing `JWT_SECRET` OR logs a visible warning about using an insecure default; does not silently accept an empty secret. | AC2 |
-| TS-02-05 | `.env.example` completeness | local-fresh | 1. Open `.env.example`. 2. Verify each variable from the spec is present: `PORT`, `DB_PATH`, `JWT_SECRET`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_USE_SSL`, `BCRYPT_COST`, `TOKEN_EXPIRY_HOURS`, `CURRENCY`. | All 11 variables present with their example values; file has no extra undocumented variables. | AC1 |
+| TS-02-05 | `.env.example` completeness | local-fresh | 1. Open `.env.example`. 2. Verify each variable from the spec is present: `PORT`, `DB_PATH`, `JWT_SECRET`, `STORAGE_TYPE`, `LOCAL_STORAGE_PATH`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET`, `MINIO_USE_SSL`, `BCRYPT_COST`, `TOKEN_EXPIRY_HOURS`, `CURRENCY`. 3. Confirm `STORAGE_TYPE=local` is the default value and that `LOCAL_STORAGE_PATH` has a default path (e.g. `./data/storage`). 4. Confirm S3/MinIO vars are commented or grouped under an "S3/MinIO settings" block so they are clearly optional for local-mode users. | All 13 variables present with their example values; `STORAGE_TYPE` defaults to `local`; file comments make it clear MinIO vars are only needed when `STORAGE_TYPE=s3`; no undocumented variables. | AC1 |
 
 ---
 
@@ -223,19 +260,22 @@ CURRENCY=VND
 ### Preconditions
 
 - Backend running.
-- MinIO may be up or down depending on scenario.
+- Storage backend (`STORAGE_TYPE`) and MinIO availability vary per scenario — see environment column.
 - `curl` available.
+
+> **Note on storage backends**: TS-06-01 and TS-06-01a test the two primary storage paths (S3 and local). TS-06-02 is scoped to `STORAGE_TYPE=s3` only — it does **not** apply when running with `STORAGE_TYPE=local` (no MinIO dependency means MinIO being down is irrelevant).
 
 ### Test Suite TS-06
 
 | ID | Scenario | Environment | Command | Expected HTTP Status | Expected Body |
 |---|---|---|---|---|---|
-| TS-06-01 | All healthy | local-configured (MinIO up) | `curl -s http://localhost:8080/api/health` | `200` | `{"status":"ok","database":"ok","storage":"ok"}` |
-| TS-06-02 | MinIO down — degraded | local-minio-down | `curl -s http://localhost:8080/api/health` | `200` | `{"status":"degraded","database":"ok","storage":"error"}` |
+| TS-06-01 | All healthy — S3 storage, MinIO up | local-with-s3 | `curl -s http://localhost:8080/api/health` | `200` | JSON includes `"status":"ok"`, `"database":"ok"`, `"storage":"ok"`, `"storage_type":"s3"` |
+| TS-06-01a | All healthy — local filesystem storage, no MinIO | local-no-minio | `curl -s http://localhost:8080/api/health` | `200` | JSON includes `"status":"ok"`, `"database":"ok"`, `"storage":"ok"`, `"storage_type":"local"` — local health uses `LocalStorage.HealthCheck`: directory must exist and a probe file must be creatable/removable under `LOCAL_STORAGE_PATH` |
+| TS-06-02 | S3/MinIO down — degraded (**`STORAGE_TYPE=s3` only**; server already running, then MinIO stopped) | local-minio-down | `curl -s http://localhost:8080/api/health` | `200` | JSON includes `"status":"degraded"`, `"database":"ok"`, `"storage":"error"`, `"storage_type":"s3"` |
 | TS-06-03 | **Negative**: DB unreachable — 503 | local-db-corrupt | Replace DB file with empty text file, restart server with a DB pinger that fails, then `curl /api/health`. | `503` | Body contains `"database":"error"` |
-| TS-06-04 | Response shape — all fields present | local-configured | `curl -s http://localhost:8080/api/health \| jq 'keys'` | `200` | JSON keys: `["database","status","storage"]` exactly |
-| TS-06-05 | Content-Type header correct | local-configured | `curl -si http://localhost:8080/api/health` | `200` | Header `Content-Type: application/json` present |
-| TS-06-06 | Endpoint accessible without auth | local-configured | `curl -s http://localhost:8080/api/health` (no Authorization header) | `200` | Health data returned; no 401 |
+| TS-06-04 | Response shape — all fields present | local-no-minio | `curl -s http://localhost:8080/api/health \| jq -c 'keys \| sort'` | `200` | JSON keys after sort: `["database","status","storage","storage_type"]` |
+| TS-06-05 | Content-Type header correct | local-no-minio | `curl -si http://localhost:8080/api/health` | `200` | Header `Content-Type: application/json` present |
+| TS-06-06 | Endpoint accessible without auth | local-no-minio | `curl -s http://localhost:8080/api/health` (no Authorization header) | `200` | Health data returned; no 401 |
 
 ---
 
@@ -244,18 +284,21 @@ CURRENCY=VND
 **Ticket**: M0-07 | **Priority**: Should  
 **Files under test**: `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`
 
+> **Scope**: TS-07 tests the full **compose stack** which uses object storage (`STORAGE_TYPE=s3` with MinIO as defined in `docker-compose.yml`). These cases are **out of scope** for "no Docker" local dev workflows — use `local-no-minio` environment for bare `go run` smoke tests.
+
 ### Preconditions
 
 - Docker Desktop or Docker Engine running.
 - Ports 8080, 5173, 9000, 9001 free.
+- Compose stack configured with `STORAGE_TYPE=s3` (as set in the compose environment or `.env` used by compose).
 
 ### Test Suite TS-07
 
 | ID | Scenario | Steps | Expected Result | AC |
 |---|---|---|---|---|
-| TS-07-01 | Full stack starts cleanly | 1. `docker compose up --build -d`. 2. Wait for all containers healthy. 3. `curl http://localhost:8080/api/health`. | All three services (`backend`, `frontend`, `minio`) in "running" state; health endpoint returns `{"status":"ok",...}`. | AC1 |
+| TS-07-01 | Full stack starts cleanly | 1. `docker compose up --build -d`. 2. Wait for all containers healthy. 3. `curl http://localhost:8080/api/health`. | All three services (`backend`, `frontend`, `minio`) in "running" state; health JSON includes `"status":"ok"`, `"storage":"ok"`, `"storage_type":"s3"`. | AC1 |
 | TS-07-02 | Backend waits for MinIO health check | 1. Observe `docker compose up` logs. 2. Check that `backend` container does not start (or does not log ready) until MinIO health check passes. | `docker compose logs backend` shows MinIO dependency satisfied before backend first handles requests; no "connection refused to MinIO" errors at startup. | AC2 |
-| TS-07-03 | MinIO health check definition present | Inspect `docker-compose.yml`. | MinIO service has a `healthcheck` block using `curl --fail http://localhost:9000/minio/health/live` (or equivalent). | AC2 |
+| TS-07-03 | MinIO health check definition present | Inspect `docker-compose.yml`. | MinIO service has a `healthcheck` block; actual command is `["CMD", "mc", "ready", "local"]` (MinIO Client ready check), not `curl`. Verify `interval`, `timeout`, and `retries` are set. | AC2 |
 | TS-07-04 | **Negative**: Backend Dockerfile produces runnable binary | 1. `docker build -t moneyapp-backend ./backend`. 2. `docker run --rm -e DB_PATH=:memory: moneyapp-backend`. | Container starts (or exits cleanly due to missing MinIO) without `exec format error` or missing binary errors. | AC1 |
 
 ---
@@ -296,14 +339,47 @@ These checks apply across multiple M0 tickets and should be verified once the fu
 
 ### Startup smoke test (all-in-one)
 
-Run after all M0 tickets are implemented:
+Run after all M0 tickets are implemented.
+
+#### Variant A — Local storage (no MinIO, no Docker)
 
 ```bash
 # 1. Fresh clone
 git clone <repo> /tmp/moneyapp-smoke && cd /tmp/moneyapp-smoke
 
-# 2. Copy env
+# 2. Copy env (defaults to STORAGE_TYPE=local)
 cp .env.example .env
+cp frontend/.env.example frontend/.env
+
+# 3. Start backend (should migrate and listen; no MinIO needed)
+cd backend && go run ./cmd/server &
+sleep 3
+
+# 4. Verify health
+curl -s http://localhost:8080/api/health | jq .
+
+# 5. Start frontend
+cd ../frontend && npm run dev &
+sleep 5
+
+# 6. Verify frontend reachable
+curl -s http://localhost:5173 | grep -c "<div"
+
+# 7. Cleanup
+kill %1 %2
+```
+
+Expected: Step 4 JSON includes `"status":"ok"`, `"database":"ok"`, `"storage":"ok"`, `"storage_type":"local"`; step 6 returns `> 0`.
+
+#### Variant B — S3/MinIO storage (with Docker)
+
+```bash
+# 1. Fresh clone
+git clone <repo> /tmp/moneyapp-smoke && cd /tmp/moneyapp-smoke
+
+# 2. Copy env and switch to S3 mode
+cp .env.example .env
+# Edit .env: set STORAGE_TYPE=s3
 cp frontend/.env.example frontend/.env
 
 # 3. Start MinIO
@@ -328,7 +404,7 @@ curl -s http://localhost:5173 | grep -c "<div"
 kill %1 %2
 ```
 
-Expected: Step 5 returns `{"status":"ok",...}`; step 7 returns `> 0`.
+Expected: Step 5 JSON includes `"status":"ok"`, `"database":"ok"`, `"storage":"ok"`, `"storage_type":"s3"`; step 7 returns `> 0`.
 
 ### Panic/recovery smoke
 
@@ -394,8 +470,10 @@ Package: internal/database
 
 ```
 Package: internal/handlers
-  - TestHealthHandler_AllOk: mock DB ping OK + MinIO OK → 200 {"status":"ok",...}
-  - TestHealthHandler_MinioDown: mock MinIO fail → 200 {"status":"degraded",...}
+  - TestHealthHandler_AllOk_S3: mock DB ping OK + MinIO/S3 OK → 200 {"status":"ok",...}
+  - TestHealthHandler_AllOk_Local: STORAGE_TYPE=local, local path writable → 200 {"status":"ok",...} (no MinIO mock needed)
+  - TestHealthHandler_MinioDown_S3Only: STORAGE_TYPE=s3, mock MinIO fail → 200 {"status":"degraded",...}
+  - TestHealthHandler_LocalStorageNotWritable: `LocalStorage.HealthCheck` fails (e.g. read-only base dir) → 200 `{"status":"degraded","storage":"error","storage_type":"local",...}`
   - TestHealthHandler_DBDown: mock DB ping fail → 503
 ```
 
@@ -403,9 +481,11 @@ Package: internal/handlers
 
 ```
 Package: internal/config
-  - TestLoad_Defaults: unset all env vars; assert defaults match .env.example values
+  - TestLoad_Defaults: unset all env vars; assert defaults match .env.example values (STORAGE_TYPE="local", LOCAL_STORAGE_PATH="./data/storage")
   - TestLoad_CustomDBPath: set DB_PATH; assert Config.DBPath matches
   - TestLoad_MissingJWTSecret: unset JWT_SECRET; assert warning log or error
+  - TestLoad_StorageTypeLocal: STORAGE_TYPE=local → no MinIO fields required; assert Config.StorageType == "local"
+  - TestLoad_StorageTypeS3: STORAGE_TYPE=s3 → assert Config.MinioEndpoint etc. populated from env
 ```
 
 ---
@@ -423,3 +503,27 @@ The following gaps were noticed while authoring this plan against tickets M0-01 
 | **M0-07 frontend Dockerfile optional** | M0-07 | The ticket marks the `frontend` Compose service as "optional". TS-07 only tests the backend + MinIO path. If the frontend service is added, extend TS-07 with a browser reachability check. |
 | **M0-08 CI host not specified** | M0-08 | Ticket says "GitHub Actions (or equivalent)". TS-08 assumes GitHub Actions. If a different CI host (GitLab CI, etc.) is used, selector/log-reading steps differ. |
 | **DB-down simulation difficulty** | M0-06 | Simulating a fully unreachable SQLite DB (TS-06-03) is non-trivial — SQLite is embedded. The most realistic approach is a unit/httptest test with a mocked `db.Ping()` that returns an error. Black-box approach: replace DB file with a directory of same name (causes Open to fail). |
+| **CI S3 path coverage** | M0-08 | `backend-s3-smoke` in `.github/workflows/ci.yml` starts MinIO in Docker and asserts `/api/health` returns `storage` ok and `storage_type` s3. Fail-fast at startup is still covered only by unit-less manual/`go test` patterns; optional follow-up: dedicated `httptest` for `NewMinIOStorage` against a fake endpoint. |
+
+---
+
+## Verification Log (storage)
+
+**Date**: 2026-04-26  
+**Verified by**: QA — automated review against implementation  
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `cd backend && go test ./... -count=1` | PASS — `internal/storage` (6 tests): Upload/Download/Delete, path traversal protection, HealthCheck, interface compliance for both `LocalStorage` and `MinIOStorage` |
+| 2 | `cd backend && go vet ./...` | PASS — no issues |
+| 3 | `STORAGE_TYPE=local LOCAL_STORAGE_PATH=/tmp/moneyapp-smoke-test PORT=18080 ./server` → `curl -s http://localhost:18080/api/health` | PASS — HTTP 200, body: `{"database":"ok","status":"ok","storage":"ok","storage_type":"local"}` |
+| 4 | `STORAGE_TYPE=s3 MINIO_ENDPOINT=localhost:9999 ... ./server` (MinIO unreachable) | PASS — process exits immediately (exit 1) with `log.Fatalf("failed to init S3 storage: check bucket: ...")` — fail-fast confirmed; server never starts |
+
+**Mismatches found and fixed in this document:**
+
+- **TS-06-01 / TS-06-01a / TS-06-02**: Expected body was missing `storage_type` field (tech lead added this field to `health.go`; plan was behind). Now aligned.
+- **TS-06-04**: Expected key list updated from `["database","status","storage"]` to `["database","status","storage","storage_type"]`.
+- **TS-06-02 scenario title**: Clarified that "MinIO down" applies only when MinIO stops *after* a running server started — not at startup (startup-down = fail-fast, never reaches health endpoint).
+- **TS-07-03**: Corrected MinIO healthcheck command from `curl --fail http://localhost:9000/minio/health/live` to `["CMD", "mc", "ready", "local"]` (matches actual `docker-compose.yml`).
+- **Preamble storage note**: Updated to reflect `storage_type` field and fail-fast startup constraint for `STORAGE_TYPE=s3`.
+- **CI S3 smoke**: `.github/workflows/ci.yml` job `backend-s3-smoke` runs MinIO in Docker and hits `/api/health` with `STORAGE_TYPE=s3` (see coverage gap table).

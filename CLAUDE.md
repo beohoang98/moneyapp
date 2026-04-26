@@ -25,12 +25,14 @@ cd frontend && npm run lint     # ESLint
 
 ### Infrastructure
 ```bash
-docker compose up minio -d      # Start MinIO (S3-compatible storage)
+docker compose up minio -d      # Start MinIO (needed only when STORAGE_TYPE=s3)
 make dev-backend                 # Shortcut: run backend
 make dev-frontend                # Shortcut: run frontend
 ```
 
 MinIO console: `http://localhost:9001` (user: `minioadmin`, pass: `minioadmin`)
+
+> **Local dev without MinIO**: set `STORAGE_TYPE=local` and `LOCAL_STORAGE_PATH=./uploads` in `.env`. The server creates the directory on startup. No Docker required for basic development.
 
 ## Architecture
 
@@ -40,7 +42,7 @@ MinIO console: `http://localhost:9001` (user: `minioadmin`, pass: `minioadmin`)
 - **`internal/models/`** — Domain structs (Expense, Income, Invoice). All monetary amounts are `int64` in minor currency units (cents), never floats.
 - **`internal/handlers/`** — HTTP handlers (route registration)
 - **`internal/services/`** — Business logic layer
-- **`internal/storage/`** — MinIO client wrapper (`minio-go/v7`). Auto-creates bucket on init. Provides Upload/Download/Delete operations.
+- **`internal/storage/`** — Configurable storage backend. `ObjectStore` in `storage.go` defines Upload/Download/Delete/HealthCheck; `LocalStorage` (`local.go`) and `MinIOStorage` (`minio.go`, S3-compatible) implement it. `cmd/server/main.go` selects the implementation from `STORAGE_TYPE` (`local` \| `s3`). See `.env.example` for all variables.
 
 ### Frontend (`frontend/`)
 - Vite + React 19 + TypeScript
@@ -49,7 +51,7 @@ MinIO console: `http://localhost:9001` (user: `minioadmin`, pass: `minioadmin`)
 ### Key Design Decisions
 - **Amounts as integers**: All money stored as `int64` minor units — never use `float64` for currency
 - **SQLite embedded**: No external DB server. WAL mode + foreign keys enabled via connection string params
-- **MinIO for files**: Receipts, invoices, attachments stored in MinIO, referenced by storage key in DB
+- **Configurable storage**: Receipts, invoices, attachments stored via `ObjectStore` — local filesystem (`STORAGE_TYPE=local`) or S3-compatible MinIO (`STORAGE_TYPE=s3`). Always referenced by an opaque `storage_key` in the DB.
 - **Document scanning**: Uses vision LLM API (e.g., Claude Vision) server-side to extract data from receipt/invoice images — no on-device OCR
 
 ## Custom Agents

@@ -5,17 +5,24 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
 	Port            string
 	DBPath          string
 	JWTSecret       string
+
+	// Storage backend selection: "local" or "s3"
+	StorageType      string
+	LocalStoragePath string
+
 	MinIOEndpoint   string
 	MinIOAccessKey  string
 	MinIOSecretKey  string
 	MinIOBucket     string
 	MinIOUseSSL     bool
+
 	BcryptCost      int
 	TokenExpiryHours int
 	Currency        string
@@ -23,17 +30,19 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Port:            getEnv("PORT", "8080"),
-		DBPath:          getEnv("DB_PATH", "./moneyapp.db"),
-		JWTSecret:       getEnv("JWT_SECRET", ""),
-		MinIOEndpoint:   getEnv("MINIO_ENDPOINT", "localhost:9000"),
-		MinIOAccessKey:  getEnv("MINIO_ACCESS_KEY", "minioadmin"),
-		MinIOSecretKey:  getEnv("MINIO_SECRET_KEY", "minioadmin"),
-		MinIOBucket:     getEnv("MINIO_BUCKET", "moneyapp"),
-		MinIOUseSSL:     getEnvBool("MINIO_USE_SSL", false),
-		BcryptCost:      getEnvInt("BCRYPT_COST", 12),
+		Port:             getEnv("PORT", "8080"),
+		DBPath:           getEnv("DB_PATH", "./moneyapp.db"),
+		JWTSecret:        getEnv("JWT_SECRET", ""),
+		StorageType:      strings.ToLower(getEnv("STORAGE_TYPE", "local")),
+		LocalStoragePath: getEnv("LOCAL_STORAGE_PATH", "./data/storage"),
+		MinIOEndpoint:    getEnv("MINIO_ENDPOINT", "localhost:9000"),
+		MinIOAccessKey:   getEnv("MINIO_ACCESS_KEY", "minioadmin"),
+		MinIOSecretKey:   getEnv("MINIO_SECRET_KEY", "minioadmin"),
+		MinIOBucket:      getEnv("MINIO_BUCKET", "moneyapp"),
+		MinIOUseSSL:      getEnvBool("MINIO_USE_SSL", false),
+		BcryptCost:       getEnvInt("BCRYPT_COST", 12),
 		TokenExpiryHours: getEnvInt("TOKEN_EXPIRY_HOURS", 24),
-		Currency:        getEnv("CURRENCY", "VND"),
+		Currency:         getEnv("CURRENCY", "VND"),
 	}
 
 	if cfg.JWTSecret == "" {
@@ -45,6 +54,13 @@ func Load() (*Config, error) {
 
 	if cfg.DBPath == "" {
 		return nil, fmt.Errorf("DB_PATH must not be empty")
+	}
+
+	switch cfg.StorageType {
+	case "local", "s3":
+		// valid
+	default:
+		return nil, fmt.Errorf("STORAGE_TYPE must be \"local\" or \"s3\", got %q", cfg.StorageType)
 	}
 
 	return cfg, nil

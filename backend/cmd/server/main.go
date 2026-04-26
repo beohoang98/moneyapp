@@ -23,22 +23,31 @@ func main() {
 	}
 	defer db.Close()
 
-	var store *storage.MinIOStorage
-	store, err = storage.NewMinIOStorage(
-		cfg.MinIOEndpoint,
-		cfg.MinIOAccessKey,
-		cfg.MinIOSecretKey,
-		cfg.MinIOBucket,
-		cfg.MinIOUseSSL,
-	)
-	if err != nil {
-		log.Printf("WARNING: MinIO not available: %v", err)
-		store = nil
+	var store storage.ObjectStore
+	switch cfg.StorageType {
+	case "local":
+		store, err = storage.NewLocalStorage(cfg.LocalStoragePath)
+		if err != nil {
+			log.Fatalf("failed to init local storage at %q: %v", cfg.LocalStoragePath, err)
+		}
+		log.Printf("Storage: local (%s)", cfg.LocalStoragePath)
+	case "s3":
+		store, err = storage.NewMinIOStorage(
+			cfg.MinIOEndpoint,
+			cfg.MinIOAccessKey,
+			cfg.MinIOSecretKey,
+			cfg.MinIOBucket,
+			cfg.MinIOUseSSL,
+		)
+		if err != nil {
+			log.Fatalf("failed to init S3 storage: %v", err)
+		}
+		log.Print("Storage: s3")
 	}
 
 	mux := http.NewServeMux()
 
-	healthHandler := handlers.NewHealthHandler(db, store)
+	healthHandler := handlers.NewHealthHandler(db, store, cfg.StorageType)
 	healthHandler.RegisterRoutes(mux)
 
 	frontendOrigin := "http://localhost:5173"

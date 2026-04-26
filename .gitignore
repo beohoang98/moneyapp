@@ -28,6 +28,9 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
+# Local storage data
+data/
+
 # Environment
 .env
 .env.local

@@ -26,6 +26,7 @@ services:
       PORT: "8080"
       DB_PATH: /data/moneyapp.db
       JWT_SECRET: ${JWT_SECRET:-change-me}
+      STORAGE_TYPE: s3
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin

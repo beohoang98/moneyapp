@@ -1,6 +1,6 @@
 # MoneyApp -- Story Tickets
 
-**Generated from**: `docs/requirements.md` v1.0
+**Generated from**: `docs/requirements.md` v1.2
 **Date**: 2026-04-26
 **Status**: Draft
 
@@ -20,7 +20,7 @@
 
 **Goal**: Runnable skeleton with infrastructure in place. No user-facing features yet.
 
-**Exit criteria**: `go run ./cmd/server` and `npm run dev` start without errors; MinIO is reachable; health endpoint returns 200; migrations run on startup; frontend renders a shell with routing.
+**Exit criteria**: `go run ./cmd/server` and `npm run dev` start without errors; storage backend is reachable (MinIO bucket when `STORAGE_TYPE=s3`, writable path when `STORAGE_TYPE=local`); health endpoint returns 200; migrations run on startup; frontend renders a shell with routing.
 
 ---
 
@@ -69,15 +69,30 @@
 **Description**: Create a `.env.example` file documenting all required environment variables (NF-21). Implement a config struct in Go that loads values from environment variables with sensible defaults.
 
 **Backend tasks**:
-- Create `.env.example` at project root with: `PORT=8080`, `DB_PATH=./moneyapp.db`, `JWT_SECRET=change-me`, `MINIO_ENDPOINT=localhost:9000`, `MINIO_ACCESS_KEY=minioadmin`, `MINIO_SECRET_KEY=minioadmin`, `MINIO_BUCKET=moneyapp`, `MINIO_USE_SSL=false`, `BCRYPT_COST=12`, `TOKEN_EXPIRY_HOURS=24`, `CURRENCY=VND`.
-- Create `internal/config/config.go` with a `Config` struct and `Load() (*Config, error)` function that reads from `os.Getenv` with defaults.
+- Create `.env.example` at project root with:
+  - `PORT=8080`
+  - `DB_PATH=./moneyapp.db`
+  - `JWT_SECRET=change-me`
+  - `BCRYPT_COST=12`
+  - `TOKEN_EXPIRY_HOURS=24`
+  - `CURRENCY=VND`
+  - `STORAGE_TYPE=local` *(storage backend selector: `local` or `s3`)*
+  - `LOCAL_STORAGE_PATH=./data/storage` *(used when `STORAGE_TYPE=local`; created on startup if missing)*
+  - `MINIO_ENDPOINT=localhost:9000` *(used when `STORAGE_TYPE=s3`)*
+  - `MINIO_ACCESS_KEY=minioadmin` *(used when `STORAGE_TYPE=s3`)*
+  - `MINIO_SECRET_KEY=minioadmin` *(used when `STORAGE_TYPE=s3`)*
+  - `MINIO_BUCKET=moneyapp` *(used when `STORAGE_TYPE=s3`)*
+  - `MINIO_USE_SSL=false` *(used when `STORAGE_TYPE=s3`)*
+- Create `internal/config/config.go` with a `Config` struct (fields: `Port`, `DBPath`, `JWTSecret`, `BcryptCost`, `TokenExpiryHours`, `Currency`, `StorageType`, `LocalStoragePath`, `MinioEndpoint`, `MinioAccessKey`, `MinioSecretKey`, `MinioBucket`, `MinioUseSSL`) and `Load() (*Config, error)` function that reads from `os.Getenv` with defaults.
 - Update `cmd/server/main.go` to use `config.Load()` instead of inline `os.Getenv`.
 
 **Frontend tasks**:
 - Create `frontend/.env.example` with `VITE_API_BASE_URL=http://localhost:8080/api`.
 
 **Acceptance criteria**:
-- Given a clean checkout, when a developer copies `.env.example` to `.env`, then the server starts successfully with default values.
+- Given a clean checkout, when a developer copies `.env.example` to `.env`, then the server starts successfully with default values (`STORAGE_TYPE=local`).
+- Given `STORAGE_TYPE=local` and `LOCAL_STORAGE_PATH=./data/storage`, when the server starts, then the `./data/storage` directory is created if it does not already exist.
+- Given `STORAGE_TYPE=s3`, when the server starts, then it reads all `MINIO_*` variables and connects to the configured endpoint; if the endpoint or bucket is unreachable, then the server exits at startup with a non-zero status and a descriptive log (fail-fast — no degraded `/api/health` while running).
 - Given `JWT_SECRET` is not set, when the server starts, then it logs a warning (or errors out, depending on security policy).
 - Given `DB_PATH` is set to a custom path, when the server starts, then the SQLite file is created at that path.
 
@@ -208,26 +223,31 @@
 | Field | Value |
 |---|---|
 | **Ticket ID** | M0-06 |
-| **Title** | Enhance health endpoint with DB and MinIO status |
+| **Title** | Enhance health endpoint with DB and storage backend status |
 | **Epic** | Infrastructure |
 | **Milestone** | M0 |
 | **Priority** | Must |
 | **Size** | XS |
 | **Dependencies** | M0-02, M0-03 |
 
-**Description**: Upgrade the existing `GET /api/health` endpoint to report the status of both the database and MinIO connections (NF-18). Return structured JSON with individual component statuses.
+**Description**: Upgrade the existing `GET /api/health` endpoint to report the status of both the database and the configured storage backend (NF-18). Return structured JSON with individual component statuses. The storage check must be appropriate to the active `STORAGE_TYPE` — it must not report an error for a MinIO endpoint that is intentionally absent when running in local mode.
 
 **Backend tasks**:
 - Move the health handler to `internal/handlers/health.go`.
-- Response format: `{"status": "ok"|"degraded", "database": "ok"|"error", "storage": "ok"|"error"}`.
-- Ping the database (`db.Ping()`) and attempt a MinIO `BucketExists` check.
-- If database is down, return HTTP 503. If only MinIO is down, return 200 with `"storage": "error"` and `"status": "degraded"`.
+- Response format: `{"status": "ok"|"degraded", "database": "ok"|"error", "storage": "ok"|"error", "storage_type": "local"|"s3"}`.
+- Ping the database (`db.Ping()`).
+- Check storage health based on `STORAGE_TYPE`:
+  - `local` — verify `LOCAL_STORAGE_PATH` exists and is writable (e.g., create and delete a probe file).
+  - `s3` — attempt a MinIO `BucketExists` check against the configured endpoint.
+- If database is down, return HTTP 503. If only storage is unhealthy, return 200 with `"storage": "error"` and `"status": "degraded"`.
 
 **Frontend tasks**: None.
 
 **Acceptance criteria**:
-- Given both DB and MinIO are healthy, when `GET /api/health` is called, then the response is `200 {"status":"ok","database":"ok","storage":"ok"}`.
-- Given MinIO is unreachable, when `GET /api/health` is called, then the response is `200 {"status":"degraded","database":"ok","storage":"error"}`.
+- Given `STORAGE_TYPE=s3` and both DB and MinIO are healthy, when `GET /api/health` is called, then the response is `200 {"status":"ok","database":"ok","storage":"ok","storage_type":"s3"}`.
+- Given `STORAGE_TYPE=s3` and the server is already running, when MinIO becomes unreachable and `GET /api/health` is called, then the response is `200` with `"status":"degraded"`, `"database":"ok"`, `"storage":"error"`, and `"storage_type":"s3"`. (If MinIO is unreachable at **process startup**, the server exits with fail-fast instead of serving this response.)
+- Given `STORAGE_TYPE=local` and the local path is writable, when `GET /api/health` is called, then the response is `200 {"status":"ok","database":"ok","storage":"ok","storage_type":"local"}` — even when no MinIO service is running.
+- Given `STORAGE_TYPE=local` and the local path is not writable, when `GET /api/health` is called, then `"storage": "error"` is returned.
 - Given the database is unreachable, when `GET /api/health` is called, then the response is `503`.
 
 ---
@@ -244,11 +264,11 @@
 | **Size** | XS |
 | **Dependencies** | M0-02 |
 
-**Description**: Enhance `docker-compose.yml` with a backend service (using a multi-stage Dockerfile), frontend dev service, and health checks for MinIO. This enables `docker compose up` for a full local development stack.
+**Description**: Enhance `docker-compose.yml` with a backend service (using a multi-stage Dockerfile), frontend dev service, and health checks for MinIO. This enables `docker compose up` for a full local development stack using MinIO as the S3-compatible storage backend.
 
 **Backend tasks**:
 - Create `backend/Dockerfile` -- multi-stage build: build stage using `golang:1.26` image, runtime stage using `gcr.io/distroless/base` or `alpine:latest`. Copy binary, expose port 8080.
-- Add `backend` service to `docker-compose.yml` depending on `minio`, with env vars from `.env`.
+- Add `backend` service to `docker-compose.yml` depending on `minio`, with env vars from `.env`. Explicitly set `STORAGE_TYPE=s3` in the backend service environment (or document that the `.env` file used by Compose must set it) so the stack uses MinIO rather than local filesystem storage.
 - Add `healthcheck` to the MinIO service (`curl --fail http://localhost:9000/minio/health/live`).
 
 **Frontend tasks**:
@@ -258,6 +278,8 @@
 **Acceptance criteria**:
 - Given the Docker Compose file, when `docker compose up` is run, then the backend, frontend, and MinIO all start and the backend can reach MinIO.
 - Given MinIO is starting, when the backend depends on it, then the backend waits for MinIO's health check to pass before starting.
+- Given `STORAGE_TYPE=s3` is set in the Compose stack, when a file is uploaded, then it is stored in the MinIO bucket (not the local filesystem).
+- **Note**: For bare-metal `go run` without Docker, set `STORAGE_TYPE=local` in `.env` to use local filesystem storage without requiring MinIO.
 
 ---
 
@@ -1161,7 +1183,7 @@
 
 ## Milestone 2 -- File Attachments & Enhanced Lists
 
-**Goal**: Add file upload/download with MinIO, inline previews, custom categories, and enhanced sorting. Auto-overdue for invoices.
+**Goal**: Add file upload/download via configurable storage backend (local or S3), inline previews, custom categories, and enhanced sorting. Auto-overdue for invoices.
 
 **Exit criteria**: User can attach files to any record, preview images inline, download files, manage custom categories, and invoices auto-transition to overdue.
 
@@ -1172,16 +1194,19 @@
 | Field | Value |
 |---|---|
 | **Ticket ID** | E7-S1 |
-| **Title** | Implement file upload to MinIO with database tracking |
+| **Title** | Implement file upload/download via configurable storage backend with database tracking |
 | **Epic** | Epic 7 -- File Attachments |
 | **Milestone** | M2 |
 | **Priority** | Must |
 | **Size** | L |
 | **Dependencies** | M0-01, M0-02 |
 
-**Description**: Build the core file attachment system. Files are uploaded to MinIO and tracked in an `attachments` table. This is a shared infrastructure ticket that all entity-specific attachment features build on.
+**Description**: Build the core file attachment system. Files are uploaded to the configured storage backend (local filesystem or S3-compatible) and tracked in an `attachments` table. This is a shared infrastructure ticket that all entity-specific attachment features build on. The implementation must use a **storage interface** so the backend is not hard-coded to MinIO.
 
 **Backend tasks**:
+- Reuse the **`ObjectStore`** interface in `internal/storage/storage.go` and implementations **`LocalStorage`** (`local.go`) and **`MinIOStorage`** (`minio.go`, S3-compatible) from M0 — extend only if attachment flows need additional methods.
+- **Do not** introduce a parallel storage abstraction or duplicate factory logic unless consolidating: today `cmd/server/main.go` branches on `cfg.StorageType` and constructs the store; E7-S1 may extract `internal/storage.NewObjectStore(cfg *config.Config) (ObjectStore, error)` only if attachment init or tests need a single entrypoint.
+- `AttachmentService` must accept `storage.ObjectStore` (interface), not a concrete MinIO client.
 - Create migration `008_create_attachments.up.sql`:
   ```sql
   CREATE TABLE attachments (
@@ -1198,17 +1223,17 @@
   ```
 - Create `internal/models/attachment.go`: `Attachment { ID, EntityType, EntityID, Filename, MimeType, SizeBytes, StorageKey, CreatedAt }`.
 - Create `internal/services/attachment_service.go`:
-  - `AttachmentService` with `db *sql.DB` and `storage *MinIOStorage`.
+  - `AttachmentService` with `db *sql.DB` and `store storage.ObjectStore` (interface, not concrete type).
   - `Upload(ctx, entityType string, entityID int64, file multipart.File, header *multipart.FileHeader) (*Attachment, error)`:
     - Validate mime type (PDF, JPEG, PNG only -- FA-01).
     - Validate file size <= 10MB (FA-02 server-side check).
     - Generate a unique storage key: `{entityType}/{entityID}/{uuid}_{filename}`.
-    - Upload to MinIO.
+    - Upload via `storage.Upload(...)`.
     - Insert attachment record in DB within a transaction (NF-11).
-    - If MinIO upload fails, do not insert DB record (NF-12).
-    - If DB insert fails after MinIO upload, delete from MinIO (cleanup).
+    - If storage upload fails, do not insert DB record (NF-12).
+    - If DB insert fails after storage upload, delete from storage (cleanup).
   - `ListByEntity(ctx, entityType string, entityID int64) ([]Attachment, error)`.
-  - `Delete(ctx, attachmentID int64) error` -- delete from both DB and MinIO.
+  - `Delete(ctx, attachmentID int64) error` -- delete from both DB and storage.
   - `DeleteByEntity(ctx, entityType string, entityID int64) error` -- delete all attachments for a record (used when parent record is deleted -- FA-05).
 - Create `internal/handlers/attachment_handler.go`:
   - `POST /api/attachments` -- multipart form: `entity_type`, `entity_id`, `file`. Returns 201 with attachment metadata.
@@ -1228,10 +1253,11 @@
   - Delete button with confirmation dialog.
 
 **Acceptance criteria**:
-- Given a valid JPEG file under 10MB, when the user uploads it for an expense, then the file is stored in MinIO and an attachment record is created in the database.
+- Given `STORAGE_TYPE=local` and a valid JPEG file under 10MB, when the user uploads it for an expense, then the file is written to `LOCAL_STORAGE_PATH` and an attachment record is created in the database.
+- Given `STORAGE_TYPE=s3` and a valid JPEG file under 10MB, when the user uploads it for an expense, then the file is stored in the MinIO bucket and an attachment record is created in the database.
 - Given a file over 10MB, when the user attempts to upload, then the client rejects it before sending the request with "File must be under 10 MB".
 - Given a `.exe` file, when the user attempts to upload, then it is rejected with "Only PDF, JPEG, and PNG files are allowed".
-- Given a record with two attached files, when the parent record is deleted, then both files are removed from MinIO (verified by absent storage keys).
+- Given a record with two attached files, when the parent record is deleted, then both files are removed from the storage backend (verified by absent storage keys).
 
 ---
 
@@ -1276,11 +1302,11 @@
 | **Size** | S |
 | **Dependencies** | E7-S1 |
 
-**Description**: Allow the user to download any attached file. The backend proxies the download from MinIO (NF-07: raw MinIO objects must not be publicly accessible).
+**Description**: Allow the user to download any attached file. The backend proxies the download from the storage backend (NF-07: raw storage objects must not be publicly accessible). Works for both `local` and `s3` backends — the handler calls `storage.Download(key)` and streams the result to the client.
 
 **Backend tasks**:
 - Add to attachment handler:
-  - `GET /api/attachments/:id/download` -- look up attachment by ID, stream the file from MinIO to the client with correct `Content-Type` and `Content-Disposition: attachment; filename="..."` headers.
+  - `GET /api/attachments/:id/download` -- look up attachment by ID, call `storage.Download(storageKey)`, and stream the file to the client with correct `Content-Type` and `Content-Disposition: attachment; filename="..."` headers.
 - Alternatively, generate a pre-signed URL with short expiry (e.g., 15 minutes) and redirect the client.
 - Decision: use proxy approach for simplicity and security.
 
@@ -1338,23 +1364,23 @@
 | **Size** | S |
 | **Dependencies** | E7-S1, E2-S6, E3-S4, E4-S6 |
 
-**Description**: When an expense, income, or invoice is deleted, all associated attachments must be deleted from both the database and MinIO storage (FA-05). This must be done within a transaction.
+**Description**: When an expense, income, or invoice is deleted, all associated attachments must be deleted from both the database and the storage backend (FA-05). This must be done within a transaction and works for both `local` and `s3` backends.
 
 **Backend tasks**:
 - Update `ExpenseService.Delete()`, `IncomeService.Delete()`, `InvoiceService.Delete()`:
   - Before deleting the record, call `AttachmentService.DeleteByEntity(ctx, entityType, entityID)`.
   - Wrap the entire operation in a DB transaction (NF-11).
-  - Delete from MinIO first, then delete DB records. If MinIO delete fails, log the error but still delete the DB record (orphaned files are less harmful than orphaned DB records -- handled by D3 audit endpoint).
+  - Delete from storage first, then delete DB records. If storage delete fails, log the error but still delete the DB record (orphaned files are less harmful than orphaned DB records -- handled by D3 audit endpoint).
 - Implement `AttachmentService.DeleteByEntity()`:
   - Query all attachment storage keys for the entity.
-  - Delete each from MinIO.
+  - Delete each via `storage.Delete(key)`.
   - Delete all attachment DB records.
 
 **Frontend tasks**: No additional frontend work needed -- existing delete flows already trigger the backend delete.
 
 **Acceptance criteria**:
-- Given an expense with 2 attached files, when the user deletes the expense, then both files are removed from MinIO and the attachment records are deleted from the database.
-- Given MinIO is temporarily unreachable during delete, then the DB records are still deleted and the server logs a warning about orphaned files.
+- Given an expense with 2 attached files, when the user deletes the expense, then both files are removed from the storage backend and the attachment records are deleted from the database.
+- Given the storage backend is temporarily unreachable during delete, then the DB records are still deleted and the server logs a warning about orphaned files.
 
 ---
 
