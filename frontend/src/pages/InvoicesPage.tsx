@@ -313,9 +313,9 @@ export function InvoicesPage() {
       {showScanModal && (
         <ScanModal
           onClose={() => setShowScanModal(false)}
-          onInvoiceCreated={() => {
+          onScanSaved={({ expenseCount }) => {
             setShowScanModal(false)
-            addToast('Invoice created from scan', 'success')
+            addToast(`Invoice created from scan (+${expenseCount} expense${expenseCount === 1 ? '' : 's'})`, 'success')
             refreshList()
           }}
         />

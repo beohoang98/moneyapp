@@ -6,6 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -17,6 +20,8 @@ import (
 	"github.com/beohoang98/moneyapp/internal/models"
 	"github.com/beohoang98/moneyapp/internal/storage"
 	"github.com/google/uuid"
+	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 	"gorm.io/gorm"
 )
 
@@ -196,6 +201,18 @@ func (s *ScanningService) ScanImage(ctx context.Context, file multipart.File, fi
 		return nil, "", fmt.Errorf("read file: %w", err)
 	}
 
+	effectiveContentType := contentType
+	if len(fileBytes) > 0 {
+		head := fileBytes
+		if len(head) > 512 {
+			head = head[:512]
+		}
+		effectiveContentType = http.DetectContentType(head)
+	}
+	if !scanAllowedMimes[effectiveContentType] {
+		return nil, "", ErrInvalidFileType
+	}
+
 	slog.Info("scanning image", "file_size_bytes", len(fileBytes), "content_type", contentType)
 
 	storageKey := fmt.Sprintf("scan-tmp/%s_%s", uuid.New().String(), sanitizeFilename(filename))
@@ -208,8 +225,14 @@ func (s *ScanningService) ScanImage(ctx context.Context, file multipart.File, fi
 		return nil, "", ctx.Err()
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(fileBytes)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", contentType, b64)
+	visionBytes, visionContentType, err := resizeForVision(fileBytes, effectiveContentType, 600)
+	if err != nil {
+		_ = s.store.Delete(context.Background(), storageKey)
+		return nil, "", fmt.Errorf("resize for vision: %w", err)
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(visionBytes)
+	dataURL := fmt.Sprintf("data:%s;base64,%s", visionContentType, b64)
 
 	scanCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -226,6 +249,58 @@ func (s *ScanningService) ScanImage(ctx context.Context, file multipart.File, fi
 	return result, storageKey, nil
 }
 
+func resizeForVision(src []byte, contentType string, maxLongEdge int) ([]byte, string, error) {
+	if maxLongEdge <= 0 {
+		return src, contentType, nil
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(src))
+	if err != nil {
+		return nil, "", err
+	}
+
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return nil, "", fmt.Errorf("invalid image dimensions")
+	}
+	if int64(w)*int64(h) > 20_000_000 {
+		return nil, "", fmt.Errorf("image too large")
+	}
+
+	longEdge := w
+	if h > longEdge {
+		longEdge = h
+	}
+	if longEdge <= maxLongEdge {
+		// Still normalize to JPEG to keep payloads smaller and consistent for the vision model.
+		var out bytes.Buffer
+		if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: 85}); err != nil {
+			return nil, "", err
+		}
+		return out.Bytes(), "image/jpeg", nil
+	}
+
+	scale := float64(maxLongEdge) / float64(longEdge)
+	newW := int(float64(w)*scale + 0.5)
+	newH := int(float64(h)*scale + 0.5)
+	if newW < 1 {
+		newW = 1
+	}
+	if newH < 1 {
+		newH = 1
+	}
+
+	dst := image.NewRGBA(image.Rect(0, 0, newW, newH))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), img, b, draw.Over, nil)
+
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, "", err
+	}
+	return out.Bytes(), "image/jpeg", nil
+}
+
 func (s *ScanningService) callVisionAPI(ctx context.Context, settings *models.ScanningSettings, imageDataURL string) (*models.ScanResult, error) {
 	apiKey := settings.APIKey
 	if apiKey == "" {
@@ -237,8 +312,8 @@ func (s *ScanningService) callVisionAPI(ctx context.Context, settings *models.Sc
   "vendor": "vendor/store name",
   "date": "YYYY-MM-DD format",
   "currency": "3-letter currency code",
-  "total_amount": integer amount in major currency units (no decimals),
-  "line_items": [{"description": "item name", "amount": integer}],
+  "total_amount": integer amount in minor currency units (smallest denomination; e.g. cents for USD; VND has no cents),
+  "line_items": [{"description": "item name", "amount": integer in minor units}],
   "confidence": {"vendor": "high|medium|low", "date": "high|medium|low", "total_amount": "high|medium|low"}
 }
 Return ONLY the JSON object, no other text.`

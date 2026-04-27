@@ -1,13 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { scanInvoice, deleteTempScan } from '../../api/scanning'
+import { createExpense } from '../../api/expenses'
+import { getCategories } from '../../api/categories'
 import { createInvoice } from '../../api/invoices'
 import { formatAmount } from '../../utils/format'
 import type { ScanResult } from '../../types/scanning'
 import { ApiClientError } from '../../api/client'
+import type { Category } from '../../types/category'
 
 interface Props {
   onClose: () => void
-  onInvoiceCreated: () => void
+  onScanSaved: (result: { invoiceId: number; expenseCount: number }) => void
 }
 
 type Step = 'pick' | 'scanning' | 'review' | 'error'
@@ -19,7 +22,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   too_many_scans: 'Another scan is in progress. Please wait a moment and try again.',
 }
 
-export function ScanModal({ onClose, onInvoiceCreated }: Props) {
+export function ScanModal({ onClose, onScanSaved }: Props) {
   const [step, setStep] = useState<Step>('pick')
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [tempStorageKey, setTempStorageKey] = useState('')
@@ -34,6 +37,8 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
   const [totalAmount, setTotalAmount] = useState('')
   const [currency, setCurrency] = useState('VND')
   const [description, setDescription] = useState('')
+  const [categories, setCategories] = useState<Category[]>([])
+  const [categoryId, setCategoryId] = useState<number | ''>('')
 
   const handleCancel = async () => {
     if (abortRef.current) {
@@ -62,6 +67,20 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    getCategories('expense')
+      .then((cats) => {
+        if (cancelled) return
+        setCategories(cats)
+        const def = cats.find((c) => c.is_default)
+        if (def) setCategoryId(def.id)
+        else if (cats[0]) setCategoryId(cats[0].id)
+      })
+      .catch(() => { /* non-blocking */ })
+    return () => { cancelled = true }
   }, [])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -122,6 +141,7 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
 
   const handleSave = async () => {
     if (!vendor || !date || !totalAmount) return
+    if (!categoryId) return
     setSaving(true)
     try {
       const invoice = await createInvoice({
@@ -133,6 +153,28 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
         description,
       })
 
+      const items = (scanResult?.line_items ?? []).filter((x) => x && x.amount > 0)
+      const payloads = items.length > 0
+        ? items.map((it) => ({
+          amount: it.amount,
+          date,
+          category_id: Number(categoryId),
+          description: `${vendor} — ${it.description || 'Item'}`,
+        }))
+        : [{
+          amount: parseInt(totalAmount, 10),
+          date,
+          category_id: Number(categoryId),
+          description: description || vendor,
+        }]
+
+      const created = []
+      for (const p of payloads) {
+        // eslint-disable-next-line no-await-in-loop
+        const exp = await createExpense(p)
+        created.push(exp)
+      }
+
       if (tempStorageKey) {
         const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080/api'
         const token = localStorage.getItem('moneyapp_token')
@@ -140,21 +182,25 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
         formData.append('entity_type', 'invoice')
         formData.append('entity_id', String(invoice.id))
         formData.append('source_storage_key', tempStorageKey)
-        await fetch(`${BASE_URL}/attachments`, {
+        const resp = await fetch(`${BASE_URL}/attachments`, {
           method: 'POST',
           headers: token ? { Authorization: `Bearer ${token}` } : {},
           body: formData,
         })
+        if (!resp.ok) throw new Error('Failed to attach scan to invoice')
       }
 
-      onInvoiceCreated()
+      onScanSaved({ invoiceId: invoice.id, expenseCount: created.length })
     } catch {
-      setErrorMessage('Failed to create invoice. Please try again.')
+      if (tempStorageKey) {
+        try { await deleteTempScan(tempStorageKey) } catch { /* best effort */ }
+      }
+      setErrorMessage('Failed to create invoice/expenses. Some expenses may have been created. Please check Expenses and try again if needed.')
       setSaving(false)
     }
   }
 
-  const canSave = vendor.trim() !== '' && date.trim() !== '' && totalAmount.trim() !== '' && parseInt(totalAmount, 10) > 0
+  const canSave = vendor.trim() !== '' && date.trim() !== '' && totalAmount.trim() !== '' && parseInt(totalAmount, 10) > 0 && categoryId !== ''
 
   const confidenceIcon = (field: string) => {
     if (!scanResult?.confidence?.[field]) return null
@@ -216,6 +262,18 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
             <h2>Review Scanned Data</h2>
 
             <div className="settings-field">
+              <label>Category</label>
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : '')}>
+                <option value="">Select a category</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.is_default ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="settings-field">
               <label>Vendor {confidenceIcon('vendor')}</label>
               <input type="text" value={vendor} onChange={(e) => setVendor(e.target.value)} />
             </div>
@@ -274,7 +332,7 @@ export function ScanModal({ onClose, onInvoiceCreated }: Props) {
                 onClick={handleSave}
                 disabled={!canSave || saving}
               >
-                {saving ? 'Creating...' : 'Create Invoice'}
+                {saving ? 'Creating...' : 'Create Invoice + Expenses'}
               </button>
             </div>
           </div>

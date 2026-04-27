@@ -2247,6 +2247,40 @@
 
 ---
 
+### M4-11: Link scanned invoice to created expenses
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | M4-11 |
+| **Title** | Link scanned invoice/bill to expenses created from scan |
+| **Epic** | Epic 4 -- Invoice & Bill Management |
+| **Milestone** | M4 |
+| **Priority** | Should |
+| **Size** | M |
+| **Dependencies** | E8-S1, E4-S1 (invoice CRUD) |
+
+**Description**: When the user scans an invoice/bill and saves it, the system can create multiple expenses (from line items). Those expenses must be linked back to the created invoice record so users can trace where expenses came from.
+
+**Backend tasks**:
+- Add a nullable foreign key column to `expenses`:
+  - `invoice_id INTEGER NULL REFERENCES invoices(id) ON DELETE SET NULL`
+- Update expense model/DTO:
+  - `Expense.InvoiceID *int64 \`json:"invoice_id,omitempty"\``
+  - Accept optional `invoice_id` in create/update payloads (validate the invoice exists if provided).
+- Update list/get responses to include `invoice_id`.
+- Consider adding `GET /api/invoices/{id}/expenses` (optional) to show linked expenses.
+
+**Frontend tasks**:
+- In scan review/save flow, pass `invoice_id` when creating expenses from a scan.
+- On invoice detail / invoice row actions, provide a way to view “Linked expenses”:
+  - Show a small count badge (e.g. “3 expenses”) and navigate/filter expenses by `invoice_id`.
+- In Expenses page, show an optional “Invoice” column / link when `invoice_id` is present.
+
+**Acceptance criteria**:
+- Given a scan produces N line items and the user saves, then an invoice is created and N expenses are created with `invoice_id` set to that invoice.
+- Given the user opens an invoice, they can see (or navigate to) the linked expenses.
+- Given an invoice is deleted, linked expenses remain but their `invoice_id` becomes null (no orphaned foreign keys).
+
 ### M4-04: Expense Tags
 
 | Field | Value |
