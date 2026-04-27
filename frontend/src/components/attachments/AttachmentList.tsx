@@ -29,10 +29,14 @@ export function AttachmentList({ entityType, entityId, refreshKey }: AttachmentL
 
   useEffect(() => {
     let cancelled = false
+    const pdfUrls = pdfBlobsRef.current
     revokeMap(blobsRef.current)
     blobsRef.current = new Map()
-    setPreviewBlobs(new Map())
-    setLoading(true)
+    queueMicrotask(() => {
+      if (cancelled) return
+      setPreviewBlobs(new Map())
+      setLoading(true)
+    })
 
     const token = localStorage.getItem(TOKEN_KEY)
 
@@ -77,8 +81,8 @@ export function AttachmentList({ entityType, entityId, refreshKey }: AttachmentL
       cancelled = true
       revokeMap(blobsRef.current)
       blobsRef.current = new Map()
-      pdfBlobsRef.current.forEach((url) => URL.revokeObjectURL(url))
-      pdfBlobsRef.current.clear()
+      pdfUrls.forEach((url) => URL.revokeObjectURL(url))
+      pdfUrls.clear()
     }
   }, [entityType, entityId, refreshKey])
 

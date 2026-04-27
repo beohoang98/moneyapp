@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getAllCategories, createCategory, updateCategory, deleteCategory } from '../api/categories'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useToast } from '../hooks/useToast'
@@ -16,15 +16,21 @@ export function CategoriesPage() {
   const [formError, setFormError] = useState('')
   const { addToast } = useToast()
 
-  const loadCategories = () => {
+  const loadCategories = useCallback(() => {
     setLoading(true)
     getAllCategories()
       .then(setCategories)
       .catch(() => addToast('Failed to load categories', 'error'))
       .finally(() => setLoading(false))
-  }
+  }, [addToast])
 
-  useEffect(() => { loadCategories() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      loadCategories()
+    }, 0)
+
+    return () => window.clearTimeout(t)
+  }, [loadCategories])
 
   const expenseCategories = categories.filter((c) => c.type === 'expense')
   const incomeCategories = categories.filter((c) => c.type === 'income')
