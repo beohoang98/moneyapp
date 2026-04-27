@@ -6,6 +6,8 @@ import { DateRangeFilter } from '../components/filters/DateRangeFilter'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FileUpload } from '../components/attachments/FileUpload'
 import { AttachmentList } from '../components/attachments/AttachmentList'
+import { ScanModal } from '../components/scanning/ScanModal'
+import { useScanningHealth } from '../hooks/useScanningHealth'
 import { useToast } from '../hooks/useToast'
 import { formatAmount, formatDisplayDate } from '../utils/format'
 import type { Invoice } from '../types/invoice'
@@ -31,6 +33,8 @@ export function InvoicesPage() {
   const [detailTarget, setDetailTarget] = useState<Invoice | null>(null)
   const [attachmentRefresh, setAttachmentRefresh] = useState(0)
   const [stats, setStats] = useState<{ total_outstanding: number; unpaid_count: number; overdue_count: number } | null>(null)
+  const [showScanModal, setShowScanModal] = useState(false)
+  const { isHealthy, message: healthMessage, isLoading: healthLoading } = useScanningHealth()
   const { addToast } = useToast()
 
   const status = searchParams.get('status') ?? ''
@@ -153,9 +157,20 @@ export function InvoicesPage() {
     <div>
       <div className="page-header">
         <h1>Invoices</h1>
-        <button className="btn btn-primary btn-sm" onClick={() => { setEditingInvoice(undefined); setShowForm(true) }}>
-          + Add Invoice
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-sm"
+            disabled={healthLoading || !isHealthy}
+            title={!isHealthy ? healthMessage : 'Scan a receipt or invoice image'}
+            onClick={() => isHealthy && setShowScanModal(true)}
+            style={!isHealthy ? { opacity: 0.4, cursor: 'not-allowed', border: '1px dashed var(--border)', color: 'var(--text-muted, #9ca3af)' } : {}}
+          >
+            Scan Invoice
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={() => { setEditingInvoice(undefined); setShowForm(true) }}>
+            + Add Invoice
+          </button>
+        </div>
       </div>
 
       {stats && stats.total_outstanding > 0 && (
@@ -294,6 +309,17 @@ export function InvoicesPage() {
 
       <ConfirmDialog open={!!deleteTarget} title="Delete Invoice" message="Are you sure you want to delete this invoice?" confirmLabel="Delete" onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} danger />
       <ConfirmDialog open={!!payTarget} title="Mark as Paid" message={payTarget ? `Mark the invoice from "${payTarget.vendor_name}" as paid?` : ''} confirmLabel="Mark as Paid" onConfirm={handleMarkPaid} onCancel={() => setPayTarget(null)} />
+
+      {showScanModal && (
+        <ScanModal
+          onClose={() => setShowScanModal(false)}
+          onInvoiceCreated={() => {
+            setShowScanModal(false)
+            addToast('Invoice created from scan', 'success')
+            refreshList()
+          }}
+        />
+      )}
     </div>
   )
 }

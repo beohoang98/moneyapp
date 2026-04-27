@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -151,6 +152,62 @@ func (s *AttachmentService) DeleteByEntity(ctx context.Context, entityType strin
 		return fmt.Errorf("delete attachments by entity: %w", err)
 	}
 	return nil
+}
+
+func (s *AttachmentService) PromoteFromTemp(ctx context.Context, entityType string, entityID int64, sourceStorageKey string) (*models.Attachment, error) {
+	if !validEntityTypes[entityType] {
+		return nil, fmt.Errorf("invalid entity type: %s", entityType)
+	}
+	if !strings.HasPrefix(sourceStorageKey, "scan-tmp/") {
+		return nil, fmt.Errorf("invalid source_storage_key: must start with scan-tmp/")
+	}
+
+	reader, err := s.store.Download(ctx, sourceStorageKey)
+	if err != nil {
+		return nil, fmt.Errorf("download temp file: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read temp file: %w", err)
+	}
+
+	parts := strings.Split(sourceStorageKey, "/")
+	originalName := parts[len(parts)-1]
+
+	mimeType := "image/jpeg"
+	if strings.HasSuffix(strings.ToLower(originalName), ".png") {
+		mimeType = "image/png"
+	} else if strings.HasSuffix(strings.ToLower(originalName), ".webp") {
+		mimeType = "image/webp"
+	}
+
+	permKey := fmt.Sprintf("%s/%d/%s_%s", entityType, entityID, uuid.New().String(), originalName)
+	if err := s.store.Upload(ctx, permKey, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
+		return nil, fmt.Errorf("upload permanent: %w", err)
+	}
+
+	att := &models.Attachment{
+		EntityType: entityType,
+		EntityID:   entityID,
+		Filename:   originalName,
+		MimeType:   mimeType,
+		SizeBytes:  int64(len(data)),
+		StorageKey: permKey,
+	}
+	if err := s.db.WithContext(ctx).Create(att).Error; err != nil {
+		if delErr := s.store.Delete(ctx, permKey); delErr != nil {
+			log.Printf("Warning: failed to clean up promoted file: %v", delErr)
+		}
+		return nil, fmt.Errorf("insert attachment: %w", err)
+	}
+
+	if delErr := s.store.Delete(ctx, sourceStorageKey); delErr != nil {
+		log.Printf("Warning: failed to delete temp file after promotion: %v", delErr)
+	}
+
+	return att, nil
 }
 
 func (s *AttachmentService) CountByEntity(ctx context.Context, entityType string, entityID int64) (int, error) {

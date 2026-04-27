@@ -11,7 +11,7 @@
 - [Milestone 0 -- Project Foundation](#milestone-0----project-foundation)
 - [Milestone 1 -- MVP Core](#milestone-1----mvp-core)
 - [Milestone 2 -- File Attachments & Enhanced Lists](#milestone-2----file-attachments--enhanced-lists)
-- [Milestone 3 -- Reports & Export](#milestone-3----reports--export)
+- [Milestone 3 -- Reports, Export & Document Scanning](#milestone-3----reports-export--document-scanning)
 - [Milestone 4 -- Polish & Nice-to-Haves](#milestone-4----polish--nice-to-haves)
 
 ---
@@ -1699,11 +1699,11 @@
 
 ---
 
-## Milestone 3 -- Reports & Export
+## Milestone 3 -- Reports, Export & Document Scanning
 
-**Goal**: Add charts, period switching, and CSV export to the dashboard and transaction lists.
+**Goal**: Add charts, period switching, CSV export, and receipt/invoice scanning via a local Ollama vision model.
 
-**Exit criteria**: Dashboard shows income vs. expense chart and category breakdown chart; user can switch periods; CSV export works on filtered views.
+**Exit criteria**: Dashboard shows income vs. expense chart and category breakdown chart; user can switch periods; CSV export (with UTF-8 BOM, no decimal conversion) works on Expenses and Income pages; scanning settings are configurable in Settings UI; the "Scan Invoice" button on the Invoices page is gated by scanning health; a complete scan-to-review-to-create flow works end-to-end using the Ollama `qwen3-vl:4b` model via the OpenAI-compatible HTTP API.
 
 ---
 
@@ -1762,13 +1762,13 @@
   - `GET /api/dashboard/monthly-trend?date_from=2026-01-01&date_to=2026-04-30` -- returns `{"data": [{"month": "2026-01", "total_income": ..., "total_expenses": ...}, ...]}`.
 
 **Frontend tasks**:
-- Install a chart library: `npm install recharts` (or `chart.js` + `react-chartjs-2`; Recharts recommended for React integration -- D5).
-- Create `src/components/dashboard/MonthlyTrendChart.tsx`:
-  - Bar chart with two series: Income (green bars) and Expenses (red bars), grouped by month.
-  - X-axis: months (e.g., "Jan", "Feb", "Mar", "Apr").
-  - Y-axis: amounts in major currency units.
-  - Tooltip showing exact amounts on hover.
-  - Responsive width.
+- Install Recharts: `npm install recharts`. **Recharts is the chosen chart library for this project** (D5 decision locked).
+- Create `src/components/dashboard/MonthlyTrendChart.tsx` using Recharts `<BarChart>`:
+  - Two `<Bar>` series: Income (green) and Expenses (red), grouped by month.
+  - `<XAxis dataKey="month">` showing abbreviated month labels (e.g., "Jan", "Feb").
+  - `<YAxis>` showing amounts in major currency units (stored values are already major units — do not divide).
+  - `<Tooltip>` showing exact amounts on hover.
+  - Wrap in `<ResponsiveContainer width="100%" height={300}>` for responsive sizing.
 - Add to `DashboardPage.tsx` below the summary cards.
 
 **Acceptance criteria**:
@@ -1801,12 +1801,12 @@
   - `GET /api/dashboard/expense-by-category?date_from=...&date_to=...` -- returns `{"data": [{"category_name": "Food", "total": 500000}, ...]}`.
 
 **Frontend tasks**:
-- Create `src/components/dashboard/CategoryBreakdownChart.tsx`:
-  - Donut chart with segments per category.
-  - Legend showing category names, amounts, and percentages.
-  - Colors per category (use category color if available, otherwise assign from a palette).
-  - Tooltip showing category name, amount, and percentage on hover.
-  - Responsive sizing.
+- Create `src/components/dashboard/CategoryBreakdownChart.tsx` using Recharts `<PieChart>` with `innerRadius` set (donut style):
+  - One `<Pie>` with segments per category, using `<Cell>` for per-segment colors.
+  - Use category color if available; otherwise cycle through a predefined 10-color palette.
+  - `<Legend>` showing category name, amount (major units — do not divide), and percentage.
+  - `<Tooltip>` showing category name, amount, and percentage on hover.
+  - Wrap in `<ResponsiveContainer width="100%" height={300}>`.
 - Add to `DashboardPage.tsx` alongside the monthly trend chart (two-column layout on desktop).
 
 **Acceptance criteria**:
@@ -1827,27 +1827,291 @@
 | **Size** | L |
 | **Dependencies** | E2-S3, E3-S3 |
 
-**Description**: Allow the user to download the currently filtered transaction list (expenses and/or income) as a UTF-8 CSV file (DB-06). The export should respect all active filters.
+**Description**: Allow the user to download the currently filtered transaction list (expenses or income) as an Excel-friendly CSV file (DB-06). The export is available on `ExpensesPage` and `IncomePage` only — **not** on the dashboard. The export respects all active filters. Amounts are written as-is from the database (stored values are already major currency units — **do not divide by 100**).
 
 **Backend tasks**:
 - Create `internal/handlers/export_handler.go`:
   - `GET /api/export/transactions?type=expense&date_from=...&date_to=...&category_id=...` -- accepts the same filters as the list endpoints.
-  - `type` param: `expense`, `income`, or `all` (both merged).
-  - Stream CSV response with `Content-Type: text/csv; charset=utf-8` and `Content-Disposition: attachment; filename="transactions_2026-04-26.csv"`.
-  - CSV columns: `date, type, category, description, amount` (DB-06 acceptance criteria).
-  - Amount in the CSV should be in major currency units (divide by 100).
-  - Use Go's `encoding/csv` package. Stream rows to avoid loading all data in memory.
+  - `type` param: `expense` or `income` (omit `all` / merged mode — each page exports its own type).
+  - Write response headers: `Content-Type: text/csv; charset=utf-8` and `Content-Disposition: attachment; filename="expenses_2026-04-26.csv"` (filename reflects type and date).
+  - **Prepend UTF-8 BOM** (`\xEF\xBB\xBF`) as the very first bytes of the response body so Excel auto-detects UTF-8 without a manual import wizard.
+  - CSV columns: `date,type,category,description,amount`.
+  - `amount` column: write the raw `int64` value from the database as a plain integer string — **no division, no decimal point**. Stored values are already in major currency units (e.g., `150000` for 150,000 VND).
+  - Use Go's `encoding/csv` package. Stream rows directly to `http.ResponseWriter` to avoid loading all rows into memory.
+  - Require authentication (JWT middleware).
 
 **Frontend tasks**:
-- Add an "Export CSV" button to both `ExpensesPage.tsx` and `IncomePage.tsx`.
-- Create `src/components/ExportButton.tsx` -- on click, constructs the export URL with current filter params and triggers a download (open in new tab or programmatic download).
-- Optionally add an "Export All Transactions" button on the dashboard.
+- Add an "Export CSV" button to `ExpensesPage.tsx` and `IncomePage.tsx` (not on `DashboardPage`).
+- Create `src/components/ExportButton.tsx` — on click, constructs the export URL with the current page's active filter params and triggers a browser download via `window.location.href` or a hidden `<a download>` click.
+- The button should pass `type=expense` when used on `ExpensesPage` and `type=income` when used on `IncomePage`.
 
 **Acceptance criteria**:
 - Given 50 filtered expenses, when the user clicks "Export CSV", then the browser downloads a CSV file with 50 data rows plus a header row.
-- Given the CSV file, when opened in a spreadsheet, then columns are: date, type, category, description, amount -- all correctly populated.
-- Given the export, then amounts are in major currency units (not minor units).
-- Given UTF-8 characters in descriptions, then the CSV is correctly encoded.
+- Given the downloaded CSV, when opened directly in Microsoft Excel (Windows), then Excel correctly displays UTF-8 characters without an import wizard (verified by the presence of the BOM).
+- Given the CSV file, when opened in a spreadsheet, then columns are: `date, type, category, description, amount` — all correctly populated.
+- Given an expense with stored amount `150000`, then the `amount` column in the CSV contains `150000` (not `1500.00` or `1500`).
+- Given UTF-8 characters (e.g., Vietnamese) in descriptions, then the CSV is correctly encoded and readable.
+- Given an unauthenticated request to `GET /api/export/transactions`, then the endpoint returns 401.
+
+---
+
+## Epic 8 — Document Scanning (M3)
+
+**Goal**: Let the user photograph a receipt or invoice and have key fields extracted automatically via a local Ollama vision model, reducing manual data entry.
+
+**Provider decision**: Local Ollama via OpenAI-compatible HTTP API (`/v1/chat/completions`). Default model: `qwen3-vl:4b`. `OPENAI_API_KEY` / `api_key` is **optional**. No cloud vision API is used.
+
+---
+
+### E8-S1: Scanning Settings & Test Connection
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | E8-S1 |
+| **Title** | Scanning settings: configure Ollama provider and verify connection |
+| **Epic** | Epic 8 -- Document Scanning |
+| **Milestone** | M3 |
+| **Priority** | Must |
+| **Size** | M |
+| **Dependencies** | M0-01, M0-02 |
+
+**Description**: Allow the administrator to configure the local Ollama scanning provider from the Settings UI. Settings are persisted server-side in the database (not in `localStorage`). The UI provides a "Test Connection" flow to verify the provider is reachable. If scanning is not configured or the health check fails, all scanning-related UI elements are greyed out (SC-11). `OPENAI_API_KEY` / `api_key` is optional — if blank, no `Authorization` header is sent.
+
+**Backend tasks**:
+- Add migration `009_create_scanning_settings.up.sql`: single-row table `scanning_settings`:
+  ```sql
+  CREATE TABLE scanning_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    base_url TEXT NOT NULL DEFAULT 'http://localhost:11434/v1',
+    model TEXT NOT NULL DEFAULT 'qwen3-vl:4b',
+    api_key TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  INSERT OR IGNORE INTO scanning_settings (id) VALUES (1);
+  ```
+- Add migration `010_update_default_scanning_model.up.sql`: if row `id=1` still has `model = 'moondream:1.8b'` (legacy default), set `model` to `qwen3-vl:4b`; leave user-chosen model strings untouched.
+- Create `internal/models/scanning.go`: struct `ScanningSettings { ID int64, Enabled bool, BaseURL string, Model string, APIKey string, UpdatedAt time.Time }`.
+- Create `internal/services/scanning_service.go`:
+  - `GetSettings(ctx) (*ScanningSettings, error)` — reads row `id=1`; returns struct with defaults if not yet written.
+  - `UpdateSettings(ctx, s *ScanningSettings) error` — upserts row `id=1`; validates `BaseURL` is a valid `http` or `https` URL.
+  - `TestConnection(ctx) (bool, string)` — calls `GET {base_url}/models` (OpenAI-compatible listing) with optional `Authorization: Bearer {api_key}` header; 5 s timeout; checks HTTP 200 and that the configured model name appears in the response. Returns `(true, "Connected")` or `(false, "<reason>")`.
+- Create `internal/handlers/scanning_handler.go` with three endpoints (all require JWT auth middleware):
+  - `GET /api/settings/scanning` → returns `{ enabled, base_url, model, api_key_set: bool }`. **Never return the raw `api_key` value.**
+  - `PUT /api/settings/scanning` → body `{ enabled, base_url, model, api_key? (omit to leave unchanged) }` → validates URL, upserts, returns updated record (with `api_key_set` substituted for `api_key`).
+  - `POST /api/settings/scanning/test` → calls `ScanningService.TestConnection()`; returns `{ ok: bool, message: string }` with HTTP 200 regardless of connection outcome (connection failure is a business result, not an HTTP error).
+
+**Frontend tasks**:
+- Extend `src/pages/SettingsPage.tsx` (created in E1-S4) with a "Document Scanning" section:
+  - Toggle: Enable scanning.
+  - Text input: Base URL (placeholder `http://localhost:11434/v1`).
+  - Text input: Model (placeholder `qwen3-vl:4b`).
+  - Password input: API Key (optional; placeholder "Leave blank if not required"; if `api_key_set: true` show "API key is saved — enter a new value to replace").
+  - "Test Connection" button → `POST /api/settings/scanning/test` → show inline result badge ("Connected ✓" or error message).
+  - "Save" button → `PUT /api/settings/scanning`.
+- Create `src/api/scanning.ts`: export `getScanningSettings()`, `updateScanningSettings(data)`, `testScanningConnection()`.
+
+**Acceptance criteria**:
+- Given a fresh database, when `GET /api/settings/scanning` is called, then it returns `{ enabled: false, base_url: "http://localhost:11434/v1", model: "qwen3-vl:4b", api_key_set: false }`.
+- Given valid settings are saved with `PUT`, when the server restarts, then the same settings are returned by `GET` (persisted in DB).
+- Given `api_key` is stored, when `GET /api/settings/scanning` is called, then the response body contains `api_key_set: true` and does **not** contain the raw `api_key` string.
+- Given a running Ollama instance with `qwen3-vl:4b` loaded, when the user clicks "Test Connection", then the UI shows "Connected" within 5 seconds.
+- Given an unreachable `base_url`, when the user clicks "Test Connection", then the UI shows the error reason without a page crash or unhandled exception.
+- Given unauthenticated requests, then `GET`, `PUT`, and `POST /api/settings/scanning/test` all return 401.
+
+---
+
+### E8-S2: Backend Scanning Endpoint (Image → Structured JSON)
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | E8-S2 |
+| **Title** | Backend: upload image, call Ollama vision model, return structured JSON |
+| **Epic** | Epic 8 -- Document Scanning |
+| **Milestone** | M3 |
+| **Priority** | Must |
+| **Size** | L |
+| **Dependencies** | E8-S1, E7-S1 |
+
+**Description**: Implement the core scanning endpoint. The frontend uploads an image; the backend stores it temporarily in the object store, calls the Ollama vision model via the OpenAI-compatible `/v1/chat/completions` endpoint, and returns structured JSON. **No invoice, expense, or income record is written to the database at this stage** (SC-06). If the user cancels (E8-S4), a separate endpoint deletes the temp image.
+
+**Backend tasks**:
+- In `internal/services/scanning_service.go`, add:
+  - `ScanImage(ctx context.Context, imageFile multipart.File, filename, contentType string) (*ScanResult, string, error)`:
+    1. Validate `contentType` is `image/jpeg`, `image/png`, or `image/webp`; reject others with a typed `ValidationError`.
+    2. Upload file to object store via `ObjectStore.Upload()` using a key prefixed `scan-tmp/{uuid}_{filename}`. Return the storage key alongside the result.
+    3. Read file bytes and base64-encode them (needed for vision request).
+    4. Build OpenAI-compatible request body:
+       - `model`: from `ScanningSettings.Model`.
+       - `max_tokens`: 2000.
+       - `messages`: single user message with two content parts: *(a)* text prompt instructing extraction of `vendor` (string), `date` (string `YYYY-MM-DD`), `currency` (string), `total_amount` (integer, major currency units), `line_items` (array of `{description: string, amount: integer}`), `confidence` (object mapping field names to `"low"`, `"medium"`, or `"high"`); *(b)* `{ type: "image_url", image_url: { url: "data:{contentType};base64,{b64}" } }`.
+    5. `POST {base_url}/v1/chat/completions` with optional `Authorization: Bearer {api_key}` header. Apply `context.WithTimeout(ctx, 60*time.Second)`.
+    6. Extract the assistant's `content` string from the response; attempt `json.Unmarshal` into `ScanResult`. If unmarshal fails, return `ExtractionError`.
+    7. Validate result: `total_amount` must be ≥ 0; `date` must parse as a date. If invalid, return `ExtractionError`.
+    8. **Never log image byte content** — use structured logging with only `file_size_bytes` and `content_type`.
+  - Struct `ScanResult { Vendor string \`json:"vendor"\`, Date string \`json:"date"\`, Currency string \`json:"currency"\`, TotalAmount int64 \`json:"total_amount"\`, LineItems []LineItem \`json:"line_items"\`, Confidence map[string]string \`json:"confidence"\` }`.
+  - Struct `LineItem { Description string \`json:"description"\`, Amount int64 \`json:"amount"\` }`.
+  - `DeleteTempScan(ctx context.Context, storageKey string) error` — validates `storageKey` starts with `scan-tmp/` (path-traversal guard, return error if not), then calls `ObjectStore.Delete(storageKey)`.
+- Add handler methods in `scanning_handler.go` (both require JWT auth):
+  - `POST /api/scanning/invoice`:
+    - Parse multipart form (max 10 MB, reuse E7-S2 size limit).
+    - Return 503 `{ error: "scanning_disabled" }` if `enabled == false`.
+    - Call `ScanningService.ScanImage()`; map errors: `ValidationError` → 400, `ExtractionError` → 422 `{ error: "extraction_failed", detail: "..." }`, timeout → 504 `{ error: "scan_timeout" }`.
+    - On success: return 200 `{ scan_result: {...}, temp_storage_key: "scan-tmp/..." }`.
+  - `DELETE /api/scanning/temp` with body `{ storage_key: "scan-tmp/..." }`:
+    - Validates key prefix; calls `DeleteTempScan`; returns 204 on success, 400 if key is invalid.
+- Write unit tests in `internal/services/scanning_service_test.go`: mock the HTTP client; test happy path, timeout, malformed JSON response, unsupported file type, invalid storage key on delete.
+
+**Frontend tasks**: None — consumed by E8-S3 and E8-S4.
+
+**Acceptance criteria**:
+- Given a valid JPEG receipt image and scanning enabled, when `POST /api/scanning/invoice` is called, then the response contains `scan_result` with at least `vendor`, `date`, `total_amount` and a non-empty `temp_storage_key` starting with `scan-tmp/`.
+- Given scanning is disabled (`enabled: false`), when the endpoint is called, then it returns 503.
+- Given an unsupported file type (e.g., GIF), when uploaded, then the endpoint returns 400.
+- Given the vision model takes > 60 seconds, when the endpoint is called, then it returns 504 `{ error: "scan_timeout" }`.
+- Given a model response whose content cannot be parsed as JSON, then the endpoint returns 422 `{ error: "extraction_failed" }`.
+- Given `DELETE /api/scanning/temp` with a `storage_key` that does not start with `scan-tmp/`, then the endpoint returns 400 (path-traversal guard).
+- Given unauthenticated requests, then both endpoints return 401.
+
+---
+
+### E8-S3: Invoice Scan Entry Point & Health Gate
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | E8-S3 |
+| **Title** | "Scan Invoice" button on invoices page, gated by scanning health |
+| **Epic** | Epic 8 -- Document Scanning |
+| **Milestone** | M3 |
+| **Priority** | Must |
+| **Size** | S |
+| **Dependencies** | E8-S1, E4-S1 |
+
+**Description**: Add a "Scan Invoice" button on the Invoices page. The button is enabled only when scanning is configured (`enabled: true`) and the provider is reachable. If not, the button is visually disabled (greyed out) with a tooltip explaining why (SC requirement). This gating check runs on page load and refreshes on window focus.
+
+**Backend tasks**:
+- Add `GET /api/scanning/health` to `scanning_handler.go` (requires JWT auth):
+  - Checks `ScanningSettings.Enabled`; if false returns `{ ok: false, message: "Scanning is disabled. Enable it in Settings." }`.
+  - If enabled, calls `ScanningService.TestConnection()` and returns its result as `{ ok: bool, message: string }`.
+  - Always returns HTTP 200 (the `ok` field carries the health status — not the HTTP status code).
+
+**Frontend tasks**:
+- Create `src/hooks/useScanningHealth.ts`:
+  - On mount, calls `GET /api/scanning/health`.
+  - Returns `{ isHealthy: boolean, message: string, isLoading: boolean }`.
+  - Re-fetches on `window` focus event (via `addEventListener('focus', ...)`) so that enabling scanning in Settings and switching tabs immediately updates the button.
+- In `src/pages/InvoicesPage.tsx`:
+  - Add "Scan Invoice" button next to the existing "New Invoice" button.
+  - If `isLoading`: render button in disabled state with no tooltip.
+  - If `!isHealthy`: render button disabled, grey, with an accessible `title` tooltip and an `aria-describedby` pointing to the `message` from the health hook (e.g., "Document scanning is not configured — go to Settings to enable it").
+  - If `isHealthy`: render button enabled; on click, open `ScanModal` (E8-S4).
+- Add `getScanningHealth()` to `src/api/scanning.ts`.
+
+**Acceptance criteria**:
+- Given scanning is disabled, when the invoices page loads, then the "Scan Invoice" button is visible, disabled, and its tooltip contains a human-readable explanation.
+- Given scanning is enabled and Ollama is healthy, when the invoices page loads, then the "Scan Invoice" button is enabled.
+- Given the user is on the invoices page, navigates to Settings, enables scanning, and returns (window focus), then the button state updates to enabled without a manual page refresh.
+- Given the health endpoint returns `ok: false` with a message, then the tooltip on the disabled button shows that message.
+- Given an unauthenticated request to `GET /api/scanning/health`, then it returns 401.
+
+---
+
+### E8-S4: Scan Review Form & Confirm-to-Save Flow
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | E8-S4 |
+| **Title** | Scan modal: review extracted data, edit, confirm → create invoice + attach image |
+| **Epic** | Epic 8 -- Document Scanning |
+| **Milestone** | M3 |
+| **Priority** | Must |
+| **Size** | L |
+| **Dependencies** | E8-S2, E8-S3, E4-S1, E7-S1 |
+
+**Description**: Implement the full scan-to-review-to-save flow inside a modal. After clicking "Scan Invoice", the user selects an image file. The frontend uploads it to `POST /api/scanning/invoice`, receives extracted data, and renders a pre-populated review form. The user edits fields as needed and clicks "Create Invoice" — only at that point is the invoice record created and the scanned image promoted to a permanent attachment. Cancelling at any point triggers immediate deletion of the temp image (SC-06).
+
+**Frontend tasks**:
+- Create `src/components/scanning/ScanModal.tsx`:
+  - **Step 1 — File picker**:
+    - `<input type="file" accept="image/jpeg,image/png,image/webp">`. Auto-triggers upload on file selection.
+    - While scanning: show full-modal loading overlay with "Scanning image…" text and a spinner.
+    - Stores `temp_storage_key` from response in component state.
+  - **Step 2 — Review form** (shown after successful scan):
+    - Pre-populated fields: Vendor / Title (`vendor`), Date (`date`), Total Amount (`total_amount`, displayed as-is — already major units), Currency (`currency`), Notes (empty by default).
+    - Line items table (SC-07): read-only list of `{ description, amount }` rows extracted from the scan. Shown below the main fields.
+    - Confidence indicators (SC-09): fields where `confidence[field] === "low"` show a warning icon (⚠) with a tooltip "Low confidence — please verify".
+    - "Create Invoice" button: disabled until `title`, `date`, and `total_amount` are non-empty.
+    - "Cancel" button: calls `DELETE /api/scanning/temp` with `{ storage_key: temp_storage_key }`, then closes the modal.
+  - Modal close triggers (Escape key, backdrop click): same cleanup as "Cancel".
+- On "Create Invoice" confirm:
+  1. `POST /api/invoices` with the reviewed form values to create the invoice record.
+  2. `POST /api/attachments` with `{ entity_type: "invoice", entity_id: <new_id>, source_storage_key: temp_storage_key }` to promote the temp image to a permanent attachment (see backend task below).
+  3. On success: close modal, refresh invoices list, show toast "Invoice created from scan".
+  4. On failure at step 1 or 2: show inline error message; do not close modal; temp image is not deleted (user can retry).
+- On scan error (503/422/504 from backend): show error message in the modal without closing; allow user to re-select an image and retry.
+- Add `scanInvoice(file: File): Promise<ScanResponse>` and `deleteTempScan(storageKey: string): Promise<void>` to `src/api/scanning.ts`.
+
+**Backend tasks**:
+- Extend `POST /api/attachments` (handler in `internal/handlers/attachment_handler.go`) to accept an optional `source_storage_key` field in the multipart form **or** JSON body (alongside `entity_type` and `entity_id`):
+  - If `source_storage_key` is provided (and no file upload): validate it starts with `scan-tmp/`; move/rename the object in `ObjectStore` from the temp key to a permanent attachment key (e.g., `attachments/{entity_type}/{entity_id}/{uuid}_{filename}`); insert the record in the `attachments` table.
+  - The move can be implemented as Upload (copy) + Delete (source) if the object store does not support native rename.
+  - If both `source_storage_key` and a file are provided: return 400 (ambiguous).
+
+**Acceptance criteria**:
+- Given the user selects a valid JPEG, when scanning completes, then a review form appears pre-populated with `vendor`, `date`, and `total_amount` from the scan result.
+- Given the scan returns `line_items`, then the review form shows a line items table below the main fields (SC-07).
+- Given a field with `confidence: "low"`, then a warning icon is shown next to that field (SC-09).
+- Given the user edits the vendor field before confirming, then the created invoice record uses the edited value, not the raw extracted value.
+- Given the created invoice, when the user opens its detail view, then the scanned image appears in the attachments section (reusing the existing attachment UI from E7-S3/E7-S4) (SC-10).
+- Given the user clicks "Cancel" at any point before confirming, then no invoice record is created and the temporary scan image is deleted from object storage (SC-06).
+- Given the user closes the modal via Escape key or backdrop click, then the same temp image cleanup occurs (SC-06).
+- Given a scan extraction error (422 from backend), then an error message is shown in the modal and the user can re-select an image without closing the modal.
+
+---
+
+### E8-S5: Scanning Robustness, Security & Concurrency
+
+| Field | Value |
+|---|---|
+| **Ticket ID** | E8-S5 |
+| **Title** | Scanning: input validation, timeout enforcement, error messaging, auth, concurrency limit |
+| **Epic** | Epic 8 -- Document Scanning |
+| **Milestone** | M3 |
+| **Priority** | Must |
+| **Size** | S |
+| **Dependencies** | E8-S2, E8-S4 |
+
+**Description**: Harden the scanning feature across the stack. Covers structured output validation, 60-second timeout enforcement, graceful user-facing error messages per error type, authentication on all endpoints, no image bytes in logs, and a concurrency limit to protect the local Ollama instance.
+
+**Backend tasks**:
+- **Schema validation** in `ScanningService.ScanImage()`: after parsing JSON from model output, validate:
+  - `total_amount` is a non-negative `int64`.
+  - `date` parses with `time.Parse("2006-01-02", ...)` (or similar).
+  - If either fails, return a typed `ExtractionError` with a detail string; handler maps to 422.
+- **Timeout**: wrap the HTTP call to Ollama with `context.WithTimeout(ctx, 60*time.Second)`. On `context.DeadlineExceeded`, handler returns 504 `{ error: "scan_timeout" }`.
+- **No image bytes in logs**: use `slog` structured logging. Log only `file_size_bytes int64` and `content_type string` at the start of `ScanImage`. Never log the base64 string or raw bytes.
+- **Auth**: confirm JWT middleware is applied to all five scanning routes (`GET /api/settings/scanning`, `PUT /api/settings/scanning`, `POST /api/settings/scanning/test`, `GET /api/scanning/health`, `POST /api/scanning/invoice`, `DELETE /api/scanning/temp`).
+- **Concurrency limit**: add a buffered channel semaphore of size 2 (`sem chan struct{}`) as a field on `ScanningService`. In `ScanImage`, do a non-blocking `select` on `sem`; if full, return a `ConcurrencyError`; handler maps to 429 `{ error: "too_many_scans" }`.
+- **Error response shape**: all 4xx/5xx responses from scanning endpoints return `{ error: string, detail?: string }` JSON (no Go stack traces).
+
+**Frontend tasks** (in `src/components/scanning/ScanModal.tsx`):
+- Map HTTP error codes to user-friendly messages:
+  - 503 → "Document scanning is not configured. Please go to Settings to enable it."
+  - 422 `extraction_failed` → "Could not extract data from this image. Please check the image is a clear photo of a receipt or invoice, and try again."
+  - 504 `scan_timeout` → "Scanning timed out. Make sure Ollama is running and the model is loaded (`ollama run qwen3-vl:4b`)."
+  - 429 → "Another scan is in progress. Please wait a moment and try again."
+  - Network/fetch error → "Could not reach the server. Check your connection."
+- Show a progress indicator (spinner + elapsed seconds counter) during scanning since it may take up to 60 seconds.
+- Disable the file picker / "Scan" trigger while a scan is in progress (prevent duplicate submissions).
+- On any error: keep modal open; allow user to re-select an image and retry.
+
+**Acceptance criteria**:
+- Given the model response omits `total_amount`, then the endpoint returns 422 `{ error: "extraction_failed" }` (not 500).
+- Given two concurrent scan requests, then both succeed; a third concurrent request returns 429 `{ error: "too_many_scans" }`.
+- Given a scan timeout, then the frontend shows the specific Ollama troubleshooting message, not a generic error.
+- Given a user encounters any error, then they can select a different image and retry without closing or reloading the modal.
+- Given server logs are examined after a scan, then no base64 image data or raw file bytes appear in any log line.
+- Given an unauthenticated request to any scanning endpoint, then the endpoint returns 401.
 
 ---
 
@@ -2259,9 +2523,14 @@
 | M2-03 | Invoice date range filter | M2 | Should | S | E4-S2 |
 | M2-04 | Income running total | M2 | Should | XS | E3-S3 |
 | E6-S2 | Dashboard period switcher | M3 | Should | S | E6-S1 |
-| E6-S3 | Income vs. expenses chart | M3 | Should | M | E6-S2 |
-| E6-S4 | Expense breakdown by category chart | M3 | Should | M | E6-S2 |
-| E6-S5 | CSV export | M3 | Should | L | E2-S3, E3-S3 |
+| E6-S3 | Income vs. expenses chart (Recharts) | M3 | Should | M | E6-S2 |
+| E6-S4 | Expense breakdown by category chart (Recharts) | M3 | Should | M | E6-S2 |
+| E6-S5 | CSV export (expense/income pages; BOM; no decimal conversion) | M3 | Should | L | E2-S3, E3-S3 |
+| E8-S1 | Scanning settings & test connection | M3 | Must | M | M0-01, M0-02 |
+| E8-S2 | Backend scanning endpoint (image → structured JSON) | M3 | Must | L | E8-S1, E7-S1 |
+| E8-S3 | Invoice scan entry point & health gate | M3 | Must | S | E8-S1, E4-S1 |
+| E8-S4 | Scan review form & confirm-to-save flow | M3 | Must | L | E8-S2, E8-S3, E4-S1, E7-S1 |
+| E8-S5 | Scanning robustness, security & concurrency | M3 | Must | S | E8-S2, E8-S4 |
 | E1-S4 | Change password | M4 | Should | S | E1-S1 |
 | M4-01 | Category colors and icons | M4 | Could | S | E5-S2 |
 | M4-02 | Remember me option | M4 | Could | XS | E1-S1 |
@@ -2313,8 +2582,14 @@
 | GET | `/api/dashboard/summary?date_from=&date_to=` | E6-S1, E6-S6 | Yes |
 | GET | `/api/dashboard/monthly-trend?date_from=&date_to=` | E6-S3 | Yes |
 | GET | `/api/dashboard/expense-by-category?date_from=&date_to=` | E6-S4 | Yes |
-| GET | `/api/export/transactions?type=&date_from=&date_to=&category_id=` | E6-S5 | Yes |
+| GET | `/api/export/transactions?type=expense|income&date_from=&date_to=&category_id=` | E6-S5 | Yes |
 | GET | `/api/export/report?date_from=&date_to=` | M4-07 | Yes |
+| GET | `/api/settings/scanning` | E8-S1 | Yes |
+| PUT | `/api/settings/scanning` | E8-S1 | Yes |
+| POST | `/api/settings/scanning/test` | E8-S1 | Yes |
+| GET | `/api/scanning/health` | E8-S3 | Yes |
+| POST | `/api/scanning/invoice` | E8-S2 | Yes |
+| DELETE | `/api/scanning/temp` | E8-S2 | Yes |
 | GET | `/api/settings/storage` | M4-06 | Yes |
 | GET | `/api/backup` | M4-09 | Yes |
 
@@ -2332,5 +2607,5 @@
 | `006_create_incomes.up.sql` | E3-S1 | Incomes table with indexes |
 | `007_create_invoices.up.sql` | E4-S1 | Invoices table with indexes |
 | `008_create_attachments.up.sql` | E7-S1 | Attachments table (polymorphic) |
-| `009_create_expense_tags.up.sql` | M4-04 | Expense tags table |
-| `010_add_invoice_recurrence.up.sql` | M4-10 | Add recurrence column to invoices |
+| `009_create_scanning_settings.up.sql` | E8-S1 | Single-row scanning settings table (Ollama provider config) |
+| `010_update_default_scanning_model.up.sql` | E8-S1 | Bump default vision model from legacy `moondream:1.8b` to `qwen3-vl:4b` where applicable |

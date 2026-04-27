@@ -42,6 +42,26 @@ func (h *AttachmentHandler) handleUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	sourceStorageKey := r.FormValue("source_storage_key")
+
+	_, _, fileErr := r.FormFile("file")
+	hasFile := fileErr == nil
+
+	if sourceStorageKey != "" && hasFile {
+		respondError(w, http.StatusBadRequest, "cannot provide both file and source_storage_key")
+		return
+	}
+
+	if sourceStorageKey != "" {
+		att, err := h.attachmentService.PromoteFromTemp(r.Context(), entityType, entityID, sourceStorageKey)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		respondSingle(w, http.StatusCreated, att)
+		return
+	}
+
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, "file is required")

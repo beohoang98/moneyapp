@@ -10,3 +10,14 @@ export interface DashboardSummary {
   overdue_amount: number
   total_outstanding: number
 }
+
+export interface MonthlyTrendItem {
+  month: string
+  total_income: number
+  total_expenses: number
+}
+
+export interface CategoryBreakdownItem {
+  category_name: string
+  total: number
+}

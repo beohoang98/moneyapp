@@ -7,6 +7,7 @@ import { CategoryFilter } from '../components/filters/CategoryFilter'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FileUpload } from '../components/attachments/FileUpload'
 import { AttachmentList } from '../components/attachments/AttachmentList'
+import { ExportButton } from '../components/ExportButton'
 import { useToast } from '../hooks/useToast'
 import { formatAmount, formatDisplayDate } from '../utils/format'
 import type { Income } from '../types/income'
@@ -118,9 +119,12 @@ export function IncomePage() {
     <div>
       <div className="page-header">
         <h1>Income</h1>
-        <button className="btn btn-primary btn-sm" onClick={() => { setEditingIncome(undefined); setShowForm(true) }}>
-          + Add Income
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <ExportButton type="income" dateFrom={dateFrom} dateTo={dateTo} categoryId={categoryId} />
+          <button className="btn btn-primary btn-sm" onClick={() => { setEditingIncome(undefined); setShowForm(true) }}>
+            + Add Income
+          </button>
+        </div>
       </div>
 
       <div className="filter-bar">

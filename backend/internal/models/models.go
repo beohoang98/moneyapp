@@ -76,3 +76,14 @@ type InvoiceStats struct {
 	OverdueCount     int   `json:"overdue_count"`
 	OverdueAmount    int64 `json:"overdue_amount"`
 }
+
+type MonthlyTrendItem struct {
+	Month         string `json:"month"`
+	TotalIncome   int64  `json:"total_income"`
+	TotalExpenses int64  `json:"total_expenses"`
+}
+
+type CategoryBreakdownItem struct {
+	CategoryName string `json:"category_name"`
+	Total        int64  `json:"total"`
+}

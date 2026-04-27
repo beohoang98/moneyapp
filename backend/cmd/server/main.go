@@ -94,6 +94,13 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 	dashboardHandler.RegisterRoutes(protectedMux)
 
+	exportHandler := handlers.NewExportHandler(expenseService, incomeService, categoryService)
+	exportHandler.RegisterRoutes(protectedMux)
+
+	scanningService := services.NewScanningService(db, store)
+	scanningHandler := handlers.NewScanningHandler(scanningService)
+	scanningHandler.RegisterRoutes(protectedMux)
+
 	authMiddleware := handlers.AuthMiddleware(authService)
 
 	mux := http.NewServeMux()

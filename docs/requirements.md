@@ -262,7 +262,7 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 | SC-08 | [S]      | The system should allow the user to choose the record type (expense / invoice) before or after scanning. |
 | SC-09 | [S]      | The system should display a confidence indicator or highlight fields where the extraction was uncertain so the user knows what to check. |
 | SC-10 | [S]      | The uploaded image should automatically be attached to the resulting record (reusing the FA-* attachment flow) so the user has the original on file. |
-| SC-11 | [S]      | Scan processing must complete and return a result within 15 seconds under normal network conditions. |
+| SC-11 | [S]      | Scan processing must complete and return a result within 60 seconds under normal network conditions. |
 | SC-12 | [C]      | The system could allow the user to capture an image directly from the device camera (via browser `<input capture>`) rather than only selecting from a file. |
 | SC-13 | [C]      | The system could persist scan results (extracted JSON + source image key) in a `scan_results` table for audit and re-processing purposes. |
 | SC-14 | [C]      | The system could suggest a category based on the vendor name using simple keyword matching. |
@@ -270,7 +270,7 @@ The primary processing approach is a vision-capable LLM API (e.g., Claude Vision
 | SC-16 | [W]      | Batch scanning of multiple receipts in a single operation is not in scope for MVP. |
 
 **Acceptance Criteria — SC-02 / SC-03:**
-- Given a clear photo of a receipt, when the user submits it for scanning, then the system returns a JSON object containing at minimum: `amount` (integer, minor units), `currency`, `vendor_name`, and `date` within 15 seconds.
+- Given a clear photo of a receipt, when the user submits it for scanning, then the system returns a JSON object containing at minimum: `amount` (integer, minor units), `currency`, `vendor_name`, and `date` within 60 seconds.
 - Given a blurry or non-receipt image, when the system cannot extract meaningful data, then the API returns a structured error response and the frontend displays a human-readable message (e.g., "We couldn't read this image. Please try a clearer photo or enter details manually.").
 
 **Acceptance Criteria — SC-04:**
@@ -347,7 +347,7 @@ The Docker Compose stack sets `STORAGE_TYPE=s3` so it continues to use MinIO. Ba
 |--------|-----------------------------------------------------------------------------------------------|
 | NF-22  | Vision API calls must be made server-side only; the API key must never be exposed to the browser. |
 | NF-23  | Images submitted for scanning must not be stored permanently on the vision API provider's infrastructure — the request must use a stateless, non-training API tier where available. |
-| NF-24  | Scan processing (upload to backend + vision API round-trip + response to client) must complete within 15 seconds under a local or residential network connection. |
+| NF-24  | Scan processing (upload to backend + vision API round-trip + response to client) must complete within 60 seconds under a local or residential network connection. |
 | NF-25  | The backend must validate the uploaded image MIME type and file size (max 10 MB, same as FA-02) before forwarding it to the vision API. |
 | NF-26  | Vision API credentials must be loaded from environment variables and documented in `.env.example`. |
 | NF-27  | If the vision API is unavailable or returns an error, the system must degrade gracefully — the user can still enter data manually without any application crash. |
@@ -583,6 +583,7 @@ Key decisions before starting M3 scanning work:
 - Confirm choice of vision API (see OQ7)
 - Confirm API key is available and billing is set up
 - Add `VISION_API_KEY` and `VISION_API_PROVIDER` to `.env.example`
+- **Self-hosted scanning (Ollama)**: the project’s reference default vision model is **`qwen3-vl:4b`** (OpenAI-compatible `/v1/chat/completions`); operators run `ollama pull qwen3-vl:4b`. The in-app Settings model field remains user-overridable.
 
 **Exit criteria**: Dashboard shows income vs. expense chart and category breakdown chart; CSV export works on all filtered views; user can scan a receipt image and have amount/vendor/date pre-filled in a review form before saving.
 
@@ -625,7 +626,7 @@ Remaining could-have items: category colors/icons, due date notifications, passw
 | OQ7 | Which vision API should be used for OCR/scanning? Options: (a) Claude Vision (Anthropic API — strong structured output, familiar SDK), (b) GPT-4o Vision (OpenAI), (c) Google Cloud Vision (traditional OCR, less flexible on complex layouts), (d) a self-hosted model (Ollama + LLaVA — no cost/privacy concern, but lower accuracy). Recommended default: Claude Vision for structured JSON extraction. | Developer | High     |
 | OQ8 | Should scan results be persisted to a `scan_results` table (SC-13) for audit, or processed statelessly with no DB write? Stateless is simpler for MVP; persisting enables re-processing and history. | Developer | Medium   |
 | OQ9 | What should happen to the uploaded image after a scan if the user does NOT save the resulting record? Options: (a) delete immediately from storage backend, (b) keep temporarily for 24 hours then purge, (c) always discard (process in memory without writing to storage). Option (c) simplifies cleanup but prevents attaching the image to the record. | Developer | Medium   |
-| OQ10 | Is the 15-second scan timeout (SC-11, NF-24) acceptable UX, or should a loading state with progress indication be prioritized? Vision API latency is typically 3–8 seconds for a receipt image; 15 s is a hard ceiling, not an expected average. | Developer | Low      |
+| OQ10 | Is the 60-second scan timeout (SC-11, NF-24) acceptable UX, or should a loading state with progress indication be prioritized? | Developer | Low      |
 
 ---
 
